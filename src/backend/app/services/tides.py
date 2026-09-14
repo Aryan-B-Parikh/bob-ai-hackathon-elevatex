@@ -14,11 +14,20 @@ Model (documented assumption):
 
 Persisted ``TidalWindow`` rows, when present, **override** the harmonic model for
 that berth (so the table frozen in Phase 0 is load-bearing, not decorative).
+``ensure_windows()`` materialises the harmonic curve into that table so the DB path
+is exercised end-to-end; the rows are labelled ``harmonic-model`` in ``note`` to keep
+the data-honesty rule (modelled values are never passed off as observed soundings).
+
+Frozen-column note: ``TidalWindow.hours_ago`` is an INTEGER offset column (frozen in
+Phase 0). We use it as the **hour offset from the plan origin t0** — i.e. hours *ahead*
+in the 0..horizon planning window, not a look-back. The name is kept for schema
+stability; the meaning is documented here and everywhere the column is read/written.
 """
 
 from __future__ import annotations
 
 import math
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
 from sqlalchemy import select
@@ -26,6 +35,7 @@ from sqlalchemy import select
 TIDE_PERIOD_H = 12.42
 TIDE_AMPLITUDE_FT = 2.8
 UNDER_KEEL_MARGIN_FT = 1.0
+HARMONIC_NOTE = "harmonic-model"   # marks a modelled (not observed) tide row
 
 
 def _phase_hours(berth_id: int) -> float:
@@ -47,7 +57,12 @@ def needs_tide(design_depth_ft: float, draft_ft: float) -> bool:
 
 @lru_cache(maxsize=1)
 def _db_overrides() -> dict[int, dict[int, float]]:
-    """Persisted TidalWindow rows → {berth_id: {hours_ago: min_depth_ft}} (cached)."""
+    """Persisted TidalWindow rows → {berth_id: {hour_offset: min_depth_ft}} (cached).
+
+    ``hour_offset`` is the frozen ``hours_ago`` column reused as an hour ahead of t0
+    (see module docstring). Cached for the process; call ``invalidate_cache()`` after
+    writing rows so a freshly-seeded table is picked up without a restart.
+    """
     try:
         from ..db import SessionLocal
         from ..models import TidalWindow
@@ -63,6 +78,49 @@ def _db_overrides() -> dict[int, dict[int, float]]:
     except Exception as exc:  # noqa: BLE001  (no DB / table missing → harmonic only)
         print(f"[tides] no persisted windows ({exc.__class__.__name__}) — harmonic model only")
         return {}
+
+
+def invalidate_cache() -> None:
+    """Drop the cached override map (call after ensure_windows / any TidalWindow write)."""
+    _db_overrides.cache_clear()
+
+
+def ensure_windows(db, horizon_hours: int = 96, t0: datetime | None = None,
+                   force: bool = False) -> int:
+    """Materialise the harmonic model into the ``tidal_window`` table (idempotent).
+
+    Writes one row per (berth, hour) for ``hour`` in ``0..horizon_hours`` using the
+    harmonic depth curve, so the DB override path is real instead of an empty table.
+    Rows are labelled ``HARMONIC_NOTE`` (modelled, not observed). Returns the number of
+    rows written (0 when the table is already populated and ``force`` is False).
+
+    W1's ``seed.py`` may later replace these with observed/predicted soundings on the
+    same schema; until then this keeps the frozen ``TidalWindow`` table load-bearing.
+    """
+    from ..models import Berth, TidalWindow
+
+    existing = db.execute(select(TidalWindow.id).limit(1)).first()
+    if existing is not None and not force:
+        return 0
+    if force:
+        db.query(TidalWindow).delete()
+
+    base_ts = (t0 or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    berths = db.execute(select(Berth)).scalars().all()
+    written = 0
+    for b in berths:
+        for hour in range(0, horizon_hours + 1):
+            db.add(TidalWindow(
+                berth_id=b.id,
+                ts=base_ts + timedelta(hours=hour),
+                hours_ago=hour,                       # frozen column = hour offset from t0
+                min_depth_ft=round(depth_ft(b.depth_ft, hour, b.id), 3),
+                note=HARMONIC_NOTE,
+            ))
+            written += 1
+    db.commit()
+    invalidate_cache()
+    return written
 
 
 def depth_at(berth_id: int, design_depth_ft: float, hour: int) -> float:

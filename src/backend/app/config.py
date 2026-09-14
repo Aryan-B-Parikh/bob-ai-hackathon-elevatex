@@ -38,12 +38,14 @@ class Settings(BaseSettings):
     sim_horizon_hours: int = 72
 
     # ---- Phase 0 feature flags (each owner flips their flag on when the feature lands) ----
+    # W1/W2 still off; W3 flips its three on by default so the shipped demo exercises the real
+    # engine paths without requiring a hand-written .env (see .env.example).
     feature_weather: bool = False       # W1 weather pipeline + W2 weather features
     feature_quality: bool = False       # W1 normalisation + completeness score
     feature_upload: bool = False        # W1 CSV schedule upload / ETA revisions
-    feature_tidal: bool = False         # W3 tidal windows in CP-SAT
-    feature_incremental: bool = False   # W3 CP-SAT warm-start re-optimise
-    feature_scenarios_ext: bool = False # W3 berth/bunching scenarios + rollback
+    feature_tidal: bool = True          # W3 tidal windows in CP-SAT
+    feature_incremental: bool = True    # W3 CP-SAT warm-start re-optimise
+    feature_scenarios_ext: bool = True  # W3 berth/bunching scenarios + rollback
 
     @property
     def cors_list(self) -> list[str]:

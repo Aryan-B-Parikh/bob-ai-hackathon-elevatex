@@ -49,3 +49,21 @@ export interface ScenarioExtendedResponse {
   parent_scenario_id: number | null;
   stub?: boolean;
 }
+
+// --- W3 tidal windows (GET /api/tides) ---
+export interface TidePoint {
+  hour: number;
+  depth_ft: number;
+}
+export interface TideBerth {
+  berth_id: number;
+  berth_name: string;
+  design_depth_ft: number;
+  curve: TidePoint[];
+}
+export interface TidesResponse {
+  period_hours: number;
+  amplitude_ft: number;
+  under_keel_margin_ft: number;
+  berths: TideBerth[];
+}

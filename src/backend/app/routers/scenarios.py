@@ -12,7 +12,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import reference as ref
 from ..db import get_db
 from ..models import ImpactAssessment, Scenario
 from ..services import pipeline, scenarios as scen_svc
@@ -64,7 +63,7 @@ def scenario(body: ScenarioBody, db: Session = Depends(get_db)):
     db.commit()
     return {"scenario_id": row.id, "params": scenario_params, "baseline": base["metrics"],
             "scenario": scen["metrics"], "impact": impact.deltas,
-            "weights": ref.OBJECTIVE_WEIGHTS, "solver": {"baseline": base["solver"], "scenario": scen["solver"]}}
+            "weights": scen["weights"], "solver": {"baseline": base["solver"], "scenario": scen["solver"]}}
 
 
 @router.post("/scenarios/extended")
@@ -98,7 +97,7 @@ def scenario_extended(body: ExtendedScenarioBody, db: Session = Depends(get_db))
         "scenario_id": row.id, "description": description,
         "solver": {"baseline": baseline["solver"], "scenario": scenario_out["solver"],
                    "scenario_status": scenario_out["status"]},
-        "weights": ref.OBJECTIVE_WEIGHTS,
+        "weights": scenario_out["weights"],
     }
 
 

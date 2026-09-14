@@ -1,5 +1,5 @@
 // Typed fetch client for the FastAPI gateway. See docs/api-contract.md.
-import type { QualityResponse, ScenarioExtendedRequest, ScenarioExtendedResponse, UploadResponse, WeatherResponse } from "./types";
+import type { QualityResponse, ScenarioExtendedRequest, ScenarioExtendedResponse, TidesResponse, UploadResponse, WeatherResponse } from "./types";
 
 export async function get<T = any>(path: string): Promise<T> {
   const r = await fetch(path);
@@ -35,8 +35,9 @@ export const api = {
   routing: () => get("/api/routing"),
   plan: () => get("/api/plan"),
   optimiseLatest: () => get("/api/optimise/latest"),
-  optimise: (body: { crane_factor: number; move_rate_per_crane_hour: number; incremental?: boolean }) =>
+  optimise: (body: { crane_factor: number; move_rate_per_crane_hour: number; incremental?: boolean; tidal?: boolean }) =>
     post("/api/optimise", body),
+  tides: (hours = 72) => get<TidesResponse>(`/api/tides?hours=${hours}`),
   bobHistory: () => get("/api/bob"),
   bob: (message: string) => post("/api/bob", { message }),
   exportUrl: (type: string) => `/api/export?type=${type}`,

@@ -158,6 +158,105 @@ def test_tidal_deep_vessels_start_only_at_high_water():
             assert tides.is_open(b.id, b.depth_ft, draft, int(round(a["start_hour"]))), a
 
 
+# ------------------------------------------------- tidal persistence (W3 gap fix)
+@requires_db
+def test_ensure_windows_populates_and_is_idempotent():
+    """The frozen TidalWindow table must actually be written, not left empty."""
+    from sqlalchemy import select
+
+    from app.db import SessionLocal
+    from app.models import TidalWindow
+    from app.services import tides
+
+    db = SessionLocal()
+    try:
+        written = tides.ensure_windows(db, horizon_hours=24, force=True)
+        assert written > 0
+        rows = db.execute(select(TidalWindow)).scalars().all()
+        assert len(rows) == written
+        # modelled rows must be labelled as such (data-honesty rule)
+        assert all(r.note == tides.HARMONIC_NOTE for r in rows)
+        # hour offsets stay inside the requested horizon
+        assert max(r.hours_ago for r in rows) == 24
+        assert min(r.hours_ago for r in rows) == 0
+
+        # second call is a no-op while rows exist
+        assert tides.ensure_windows(db, horizon_hours=24) == 0
+    finally:
+        db.close()
+
+
+@requires_db
+def test_depth_at_prefers_persisted_rows_over_harmonic():
+    """A persisted TidalWindow row must override the harmonic model for that berth/hour."""
+    from sqlalchemy import select
+
+    from app.db import SessionLocal
+    from app.models import Berth, TidalWindow
+    from app.services import tides
+
+    db = SessionLocal()
+    try:
+        tides.ensure_windows(db, horizon_hours=24, force=True)
+        berth = db.execute(select(Berth)).scalars().first()
+        assert berth is not None
+
+        sentinel = 1.5  # nothing the harmonic model could produce
+        row = db.execute(
+            select(TidalWindow).where(TidalWindow.berth_id == berth.id, TidalWindow.hours_ago == 3)
+        ).scalars().first()
+        assert row is not None
+        row.min_depth_ft = sentinel
+        db.commit()
+        tides.invalidate_cache()
+
+        assert tides.depth_at(berth.id, berth.depth_ft, 3) == pytest.approx(sentinel)
+        # an hour with no override still falls back to the harmonic curve
+        assert tides.depth_at(berth.id, berth.depth_ft, 999) == pytest.approx(
+            tides.depth_ft(berth.depth_ft, 999, berth.id)
+        )
+    finally:
+        # leave the table in a clean, fully-modelled state for later tests, but never let
+        # cleanup raise over the top of a real assertion failure
+        try:
+            tides.ensure_windows(db, horizon_hours=24, force=True)
+        except Exception:  # noqa: BLE001
+            db.rollback()
+        db.close()
+
+
+@requires_db
+def test_incremental_solve_is_not_slower_than_cold_start():
+    """TEAM_PLAN acceptance criterion: a warm-started re-plan must not cost more wall clock
+    than the cold solve it re-runs (it is hinted AND given a shorter budget)."""
+    from app.db import SessionLocal
+    from app.services import optimiser, pipeline
+
+    # the mechanism, asserted deterministically (no timing noise)
+    assert optimiser.INCREMENTAL_SOLVE_SECONDS < optimiser.MAX_SOLVE_SECONDS
+
+    db = SessionLocal()
+    try:
+        ctx = pipeline.load_context(db)
+        cold = optimiser.optimise(ctx, {}, {})                    # primes the warm-start cache
+        warm = optimiser.optimise(ctx, {}, {"incremental": True})
+    finally:
+        db.close()
+
+    assert cold["incremental"] is False
+    assert warm["incremental"] is True, "warm-start did not engage — cache/t0 mismatch"
+    # generous tolerance: this must catch a real regression (a warm start that is *slower*)
+    # without failing on scheduler jitter when both solves finish in a few hundred ms.
+    budget = max(cold["solve_ms"] * 1.5, cold["solve_ms"] + 500)
+    assert warm["solve_ms"] <= budget, (
+        f"incremental solve was slower: warm={warm['solve_ms']}ms cold={cold['solve_ms']}ms"
+    )
+    # the hinted run must still be a usable solution, not a timeout with nothing served
+    assert warm["assignments"], "warm-started solve returned no assignments"
+    # and the hint must not have degraded quality — same throughput as the cold solve
+    assert warm["metrics"]["serviced"] >= cold["metrics"]["serviced"]
+
+
 @requires_db
 def test_scenario_cache_key_includes_context():
     """Regression: a scenario that changes the context must NOT return the cached baseline.
@@ -183,3 +282,157 @@ def test_scenario_cache_key_includes_context():
     assert scen["assignments"], "scenario must still schedule something"
     assert all(a["berth_id"] in allowed for a in scen["assignments"]), \
         "stale cache: assignment references a berth that the scenario removed"
+
+
+# ------------------------------------------------- feature-flag wiring (W3 gap fix)
+def test_pipeline_defaults_tidal_from_feature_flag():
+    """A caller that passes no scenario must still get the configured tidal behaviour.
+
+    This is the bug the W3 audit found: tidal was implemented but unreachable on the
+    default `build_full(db)` path, so every read endpoint solved without it.
+    """
+    from app.config import get_settings
+    from app.services.pipeline import _with_feature_defaults
+
+    flag = bool(get_settings().feature_tidal)
+    assert _with_feature_defaults(None)["tidal"] is flag
+    assert _with_feature_defaults({})["tidal"] is flag
+    # an explicit value always wins over the flag (so the UI toggle can switch it off)
+    assert _with_feature_defaults({"tidal": False})["tidal"] is False
+    assert _with_feature_defaults({"tidal": True})["tidal"] is True
+    # unrelated scenario keys are preserved, and the caller's dict is not mutated
+    src = {"crane_factor": 0.75}
+    out = _with_feature_defaults(src)
+    assert out["crane_factor"] == 0.75
+    assert "tidal" not in src, "_with_feature_defaults must not mutate its argument"
+    # incremental is deliberately NOT defaulted here (process-global warm-start cache)
+    assert "incremental" not in _with_feature_defaults({})
+
+
+def test_optimise_flag_resolution_is_tri_state():
+    """query param > body field > feature flag, and an explicit false must win.
+
+    With FEATURE_TIDAL defaulting to true, a plain `bool = False` body field could never
+    express "off" — `body.tidal or flag` is always true. The UI toggle depends on this.
+    """
+    from app.routers.optimise import _resolve
+
+    assert _resolve(None, None, True) is True        # nothing specified -> flag
+    assert _resolve(None, None, False) is False
+    assert _resolve(None, False, True) is False      # body false beats an enabled flag
+    assert _resolve(None, True, False) is True
+    assert _resolve(False, True, True) is False      # query param beats the body
+    assert _resolve(True, False, False) is True
+
+
+@requires_db
+def test_tides_endpoint_shape(client):
+    """GET /api/tides must expose a usable curve per berth (the UI shades the Gantt with it)."""
+    body = client.get("/api/tides?hours=48").json()
+    assert {"period_hours", "amplitude_ft", "under_keel_margin_ft", "berths"} <= set(body)
+    assert body["berths"], "no berths returned"
+    b = body["berths"][0]
+    assert {"berth_id", "berth_name", "design_depth_ft", "curve"} <= set(b)
+    assert len(b["curve"]) == 49                     # hours 0..48 inclusive
+    assert {"hour", "depth_ft"} <= set(b["curve"][0])
+    # the curve must actually vary (a flat line would mean the model never engaged)
+    depths = [p["depth_ft"] for p in b["curve"]]
+    assert max(depths) > min(depths)
+    # and it must straddle the charted depth, since that is what "high water" is measured against
+    assert min(depths) < b["design_depth_ft"] < max(depths)
+
+
+@requires_db
+def test_explicit_tidal_false_overrides_the_feature_flag():
+    """`tidal: False` must switch the constraint off even when FEATURE_TIDAL is on.
+
+    Regression: the engine used `scenario.get("tidal", False) or feature_tidal`, so once the
+    flag defaulted to true an explicit false could never turn the constraint off — the UI
+    toggle and any `?tidal=0` request were silently ignored.
+    """
+    from app.db import SessionLocal
+    from app.services import optimiser, pipeline
+
+    db = SessionLocal()
+    try:
+        ctx = pipeline.load_context(db)
+        off = optimiser.optimise(ctx, {}, {"tidal": False})
+        on = optimiser.optimise(ctx, {}, {"tidal": True})
+    finally:
+        db.close()
+
+    assert off["params"]["tidal"] is False, "explicit tidal=False was overridden by the flag"
+    assert on["params"]["tidal"] is True
+    # with the constraint disabled there is nothing to verify, so it reports trivially feasible
+    assert off["tidal_feasible"] is True
+
+
+@requires_db
+def test_warm_start_declines_on_a_different_instance():
+    """A cached plan must not be used to hint a *different* problem instance."""
+    from app.db import SessionLocal
+    from app.services import optimiser, pipeline, scenarios as S
+
+    db = SessionLocal()
+    try:
+        ctx = pipeline.load_context(db)
+        optimiser.optimise(ctx, {}, {})                      # prime the cache on the full instance
+        small, _ = S.modify_context(ctx, _body(kind="BERTH_REMOVED", terminal_code="PCT",
+                                               berth_count_delta=2))
+        scen = optimiser.optimise(small, {}, {"incremental": True})
+        # same instance again -> the warm start is allowed to engage
+        again = optimiser.optimise(ctx, {}, {"incremental": True})
+    finally:
+        db.close()
+
+    assert scen["incremental"] is False, "warm-started a plan from a different berth set"
+    assert again["incremental"] is True, "warm start failed to engage on an unchanged instance"
+
+
+def test_instance_sig_covers_move_rate_and_tidal():
+    """Warm-start hints depend on solve math, not just geometry: a sig computed at
+    28 moves/h with tides off must not unlock hints for a 24 moves/h run with tides on."""
+    from app.services.optimiser import _instance_sig
+    b, q = _berths(), [_vessel(1)]
+    assert _instance_sig(b, q, move_rate=28.0, tidal=False) == _instance_sig(b, q, move_rate=28.0, tidal=False)
+    assert _instance_sig(b, q, move_rate=24.0, tidal=False) != _instance_sig(b, q, move_rate=28.0, tidal=False)
+    assert _instance_sig(b, q, move_rate=28.0, tidal=True) != _instance_sig(b, q, move_rate=28.0, tidal=False)
+
+
+def test_optimizer_cache_key_distinguishes_eta_shift():
+    """SCHEDULE_CHANGE keeps ids and counts identical — only ETAs move — so the key
+    must cover ETAs or the scenario silently returns the baseline plan."""
+    from app.services import pipeline
+    k1 = pipeline._optimizer_cache_key(_ctx(), {})
+    shifted = _ctx(vessels=[_vessel(1, eta=5.0), _vessel(2, eta=0.0)])
+    k2 = pipeline._optimizer_cache_key(shifted, {})
+    assert k1 != k2
+
+
+def test_scheduler_responses_forward_engine_weights_not_reference():
+    """`weights` in the optimiser/scheduler responses must be the constants CP-SAT
+    actually minimized with (see optimiser return), never the nominal §17 dict."""
+    from pathlib import Path
+    services = Path(__file__).resolve().parents[1] / "app" / "services"
+    assert "ref.OBJECTIVE_WEIGHTS" not in (services / "optimiser.py").read_text()
+    routers = Path(__file__).resolve().parents[1] / "app" / "routers"
+    assert "ref.OBJECTIVE_WEIGHTS" not in (routers / "scenarios.py").read_text()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_solver_caches():
+    """The warm-start and pipeline caches are process-global by design; without a reset,
+    an earlier test's solved instance leaks into later tests that share the same fake t0
+    (e.g. a scenario-builder solve polluting `test_warm_start_declines_on_a_different_instance`).
+    Each test primes exactly what it needs."""
+    from app.services import optimiser, pipeline
+
+    def _reset():
+        optimiser._warm.clear()
+        pipeline._opt_cache = {"key": None, "out": None}
+        pipeline._opt_cache_at = 0.0
+        pipeline._fc_cache = {"key": None, "forecasts": None, "run_id": None}
+
+    _reset()
+    yield
+    _reset()

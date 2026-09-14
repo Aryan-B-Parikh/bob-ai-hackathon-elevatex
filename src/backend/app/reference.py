@@ -130,5 +130,8 @@ AVAILABILITY_BUFFER_HOURS = {"high": 6, "medium": 18, "low": 36}
 # forecast uncertainty, disruption signal.
 RISK_WEIGHTS = {"queue": 0.34, "utilisation": 0.24, "variance": 0.16, "uncertainty": 0.16, "disruption": 0.10}
 
-# Optimiser objective weights (exposed to the supervisor per J req.)
+# Nominal §17 objective weights in the spec's formula language (documentation only — NOT what
+# CP-SAT minimises). The solver's actual integer constants live in services/optimiser.py and are
+# returned per-run in the optimiser output's `weights` field (and persisted on OptimiserRun.weights)
+# so a supervisor always sees the real numbers. Do not re-point any code at this dict.
 OBJECTIVE_WEIGHTS = {"wait": 1.0, "makespan": 0.05, "crane_imbalance": 0.15, "priority_bonus": 0.10}

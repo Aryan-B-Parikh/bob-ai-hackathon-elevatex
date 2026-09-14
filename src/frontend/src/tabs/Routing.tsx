@@ -34,6 +34,38 @@ export default function Routing() {
               savings <b className="accent">${Number(r.est_savings_usd).toLocaleString()}</b> · conf {r.confidence}{r.sustained ? " · sustained" : ""}
             </div>
             <div className="muted text-xs mt-2">{r.rationale}</div>
+
+            {/* W3: option_detail — why this rule fired, the best berthing window, and the
+                best in-port terminal swap when one exists. */}
+            {r.option_detail && (
+              <div className="mt-2 pt-2" style={{ borderTop: "1px solid var(--line)" }}>
+                <div className="muted text-[10px] mono">{r.option_detail.rule}</div>
+                <div className="text-xs mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                  {r.option_detail.berthing_window && (
+                    <span>
+                      best window{" "}
+                      <b className="accent">
+                        +{r.option_detail.berthing_window.hour}h
+                      </b>{" "}
+                      <span className="muted">(wait {r.option_detail.berthing_window.wait_hours}h)</span>
+                    </span>
+                  )}
+                  {r.option_detail.alternate_terminal && (
+                    <span>
+                      in-port swap →{" "}
+                      <b className="accent">{r.option_detail.alternate_terminal.zone_code}</b>{" "}
+                      <span className="muted">
+                        (wait {r.option_detail.alternate_terminal.wait_hours}h,
+                        saves {r.option_detail.alternate_terminal.savings_hours}h)
+                      </span>
+                    </span>
+                  )}
+                  {!r.option_detail.berthing_window && !r.option_detail.alternate_terminal && (
+                    <span className="muted">no alternative window or in-port swap available</span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>
