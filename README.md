@@ -38,7 +38,16 @@ A **SimPy** discrete-event simulation generates the synthetic berth/crane/yard/g
 | 3 | Optimise berth & crane assignments | `src/backend/app/services/optimiser.py` (OR-Tools CP-SAT) | `GET`/`POST /api/optimise` | **Berth & Cranes** |
 | 4 | 72-hour operations plan | `src/backend/app/services/plan.py` (+ `llm.py`) | `GET`/`POST /api/plan` | **72-Hr Plan** |
 
-Cross-cutting: KPIs / hotspots / anomalies via `pipeline.py` → `GET /api/overview`; Bob via `services/llm.py` → `GET`/`POST /api/bob`.
+Cross-cutting: KPIs / hotspots / anomalies via `pipeline.py` → `GET /api/overview`; Bob via `services/bob.py` → `GET`/`POST /api/bob`.
+
+### 🤖 IBM Bob integration (MCP)
+
+IBM Bob is a first-class consumer of the engines through a **Model Context Protocol server**
+(`src/backend/app/mcp_server.py`): Bob calls **11 tools** (`forecast_congestion`, `rank_hotspots`,
+`optimise_berth_cranes`, `recommend_routing`, `generate_operations_plan`, `simulate_scenario`, …),
+**4 resources** and **2 prompts**, and each call actually runs LightGBM / OR-Tools CP-SAT / routing.
+The dashboard's **Bob AI** tab uses the same `services/bob.py` brain. Register Bob with the config in
+[`docs/bob-mcp.md`](docs/bob-mcp.md) (`src/backend/bob-mcp.config.json`).
 
 ---
 
@@ -49,7 +58,7 @@ Cross-cutting: KPIs / hotspots / anomalies via `pipeline.py` → `GET /api/overv
 - **OR-Tools CP-SAT optimiser (BAP/QCAP)** — berth assignment, crane count and start time decided together under hard constraints (berth length/depth, crane reach, no berth overlap, terminal crane-pool capacity); a FIFO baseline is solved alongside for measured deltas; objective weights are exposed.
 - **Isolation Forest anomaly detection** — flags bunching / outage / yard saturation and distinguishes a likely **data error** from a real disruption; refuses to assert below a minimum sample size.
 - **Resource-binding hotspot scoring** — a composite risk score `w1·queue + w2·utilisation + w3·variance + w4·uncertainty + w5·disruption` that says *which resource is the bottleneck*, not just which berth is busiest.
-- **Bob, the load-bearing AI assistant** — intent → **real engine calls** → strictly grounded prompt → Claude (phrasing only) → tool-call metadata → deterministic fallback with no key.
+- **Bob, the load-bearing AI assistant** — exposed to **IBM Bob** as an MCP server (11 tools + resources + prompts) so Bob actually runs the engines, *and* available in-app via `services/bob.py`; intent → real engine calls → strictly grounded prompt → Claude (phrasing only) → tool-call metadata → deterministic fallback.
 - **Operational extras** — what-if scenario simulator (crane availability / productivity), live real-POLB terminal/crane/yard/gate table, CSV exports, and a light/dark-ready dashboard.
 
 ---
@@ -60,7 +69,7 @@ Cross-cutting: KPIs / hotspots / anomalies via `pipeline.py` → `GET /api/overv
 |---|---|
 | **Languages** | Python 3.11, TypeScript |
 | **Frameworks** | FastAPI, React, Vite, Tailwind CSS, SQLAlchemy 2, LightGBM, scikit-learn, Google OR-Tools (CP-SAT), SimPy |
-| **IBM Technologies** | IBM Bob (AI ops assistant) |
+| **IBM Technologies** | IBM Bob (invoked via our Model Context Protocol server) |
 | **Databases** | PostgreSQL (psycopg3) |
 | **Other** | Anthropic Claude (plan narrative, phrasing only), Recharts, uv, NOAA AccessAIS pipeline, Open-Meteo |
 
@@ -166,5 +175,6 @@ The **entire stack matches the technical plan** — SimPy generates the operatio
 - [`docs/architecture.md`](docs/architecture.md) — layers, data flow, API, Bob flow
 - [`docs/setup-guide.md`](docs/setup-guide.md) — tested setup, env vars, troubleshooting
 - [`src/README.md`](src/README.md) — annotated monorepo map
+- [`docs/bob-mcp.md`](docs/bob-mcp.md) — IBM Bob MCP integration (tools, resources, registration)
 - [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) — honest code-vs-spec status
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — dev workflow

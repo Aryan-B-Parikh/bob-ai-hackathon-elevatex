@@ -88,6 +88,7 @@ vessel calls, ETA revisions and 14-day hourly congestion series.
 | `uv run python -m app.seed` | Reseed reference data + SimPy operations layer |
 | `uv run python -m app.pipelines.ais build <ais.csv> series.csv` | NOAA AccessAIS export → congestion series |
 | `uv run python -m app.pipelines.ais import series.csv` | Load a series into the DB (`source="AIS"`) |
+| `uv run python -m app.mcp_server` | Run the MCP server (stdio) for IBM Bob |
 | `npm run dev` (in `frontend/`) | Run the React/Vite dashboard (:5173) |
 | `npm run build` (in `frontend/`) | Type-check + production build |
 | `curl localhost:8000/api/forecast?zone=Z-PORT` | LightGBM forecast + bands + validation |
@@ -108,6 +109,7 @@ vessel calls, ETA revisions and 14-day hourly congestion series.
 | `/api/hotspots` | GET | Risk-score ranking + binding resource |
 | `/api/export?type=` | GET | CSV: assignments / routing / vessels / forecast |
 | `/api/bob` | GET/POST | Assistant history / message (Claude + deterministic fallback) |
+| **MCP** `app.mcp_server` | stdio / HTTP | 11 engine tools + resources + prompts for **IBM Bob** |
 
 ## 8. Troubleshooting
 

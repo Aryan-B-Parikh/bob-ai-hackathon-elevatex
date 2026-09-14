@@ -13,6 +13,7 @@ src/
 │   │   ├── reference.py         # REAL Port of Long Beach terminals + documented constants
 │   │   ├── seed.py              # DB seed: real reference data + SimPy synthetic layer
 │   │   ├── serialize.py         # dataclass → JSON helpers
+│   │   ├── mcp_server.py        # MCP server: 11 tools + resources + prompts for IBM Bob
 │   │   ├── pipelines/           # batch data loads (NOAA AccessAIS → congestion series → DB)
 │   │   ├── routers/             # one router per capability (overview, forecast, optimise,
 │   │   │                        #   routing, plan, catalog, bob) behind the gateway
@@ -24,10 +25,12 @@ src/
 │   │       ├── optimiser.py     # Google OR-Tools CP-SAT (BAP/QCAP) + FIFO baseline
 │   │       ├── routing.py       # DIVERT / SLOW_STEAM / PRIORITY_WINDOW / HOLD rule engine
 │   │       ├── plan.py          # 12 × 6h operations plan (JSON + printable text)
+│   │       ├── bob.py           # Bob brain (shared by the API router and the MCP server)
 │   │       ├── llm.py           # Claude (Anthropic) narrative — phrasing only
 │   │       ├── context.py       # DB → shared engine context (one model time t0)
 │   │       └── pipeline.py      # orchestration + persistence
 │   ├── pyproject.toml           # Python deps (uv)
+│   ├── bob-mcp.config.json      # ready-to-edit IBM Bob MCP registration
 │   ├── .env.example
 │   └── README.md
 │
@@ -60,6 +63,7 @@ AccessAIS → congestion-series batch load).
 | Optimisation (BAP/QCAP) | Google OR-Tools **CP-SAT** | `backend/app/services/optimiser.py` |
 | Routing | rule + cost model | `backend/app/services/routing.py` |
 | 72h plan | assembler + **Claude** narrative | `backend/app/services/plan.py`, `llm.py` |
+| Bob (in-app + IBM Bob) | shared brain + **MCP server** | `backend/app/services/bob.py`, `backend/app/mcp_server.py` |
 | Persistence | PostgreSQL (SQLAlchemy 2 + psycopg3) | `backend/app/models.py`, `db.py` |
 | Data pipeline (batch) | NOAA AccessAIS → congestion series | `backend/app/pipelines/ais.py` |
 | Dashboard | React + Vite + Tailwind + Recharts | `frontend/` |

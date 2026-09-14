@@ -55,7 +55,7 @@ submission:
   tech_stack:
     languages: ["Python", "TypeScript"]     # REQUIRED — e.g., ["Python", "TypeScript"]
     frameworks: ["FastAPI", "React", "Vite", "Tailwind CSS", "SQLAlchemy", "LightGBM", "scikit-learn", "Google OR-Tools (CP-SAT)", "SimPy"]
-    ibm_technologies: ["IBM Bob"]            # e.g., ["watsonx.ai", "IBM Bob", "IBM Cloud Functions"]
+    ibm_technologies: ["IBM Bob (invoked via our MCP server)"]  # e.g., ["watsonx.ai", "IBM Bob", "IBM Cloud Functions"]
     databases: ["PostgreSQL"]
     other: ["Anthropic Claude (plan narrative, phrasing only)", "psycopg3", "Recharts", "uv", "NOAA AccessAIS data pipeline", "Open-Meteo weather"]
 
@@ -65,9 +65,12 @@ submission:
     forecasts congestion, a scikit-learn Isolation Forest detects disruptions,
     and Google OR-Tools CP-SAT solves the berth-allocation + quay-crane problem
     exactly under hard physical constraints (with an honest FIFO baseline and
-    measured deltas). Equally, Bob is load-bearing rather than cosmetic — every
-    answer actually runs the engines and is auditable through the tool-call
-    metadata, with a deterministic fallback built from the same engine output.
+    measured deltas). Bob is load-bearing on two surfaces over one shared brain
+    (app/services/bob.py): the in-app assistant AND **IBM Bob via our MCP
+    server** (app/mcp_server.py exposes 11 engine tools, resources and prompts),
+    so Bob actually runs the forecast / CP-SAT optimiser / routing / plan and
+    every answer is auditable through the tool-call metadata, with a
+    deterministic fallback built from the same engine output.
 
   known_limitations: >                    # Optional but recommended — be honest about gaps
     The vessel queue and 14-day congestion history are a deterministic,

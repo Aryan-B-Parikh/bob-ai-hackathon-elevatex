@@ -16,7 +16,7 @@ The remaining gaps are feature-depth items (a few modules) rather than stack div
 
 | | Count |
 |---|---|
-| ✅ Done | 20 |
+| ✅ Done | 21 |
 | 🟡 Partial | 17 |
 | ❌ Missing | 5 |
 
@@ -33,7 +33,8 @@ The remaining gaps are feature-depth items (a few modules) rather than stack div
 | Simulation | **SimPy** discrete-event | **SimPy** berth resources (`services/simulation.py`) | ✅ |
 | Database | PostgreSQL + TimescaleDB *or plain tables* | **PostgreSQL** via SQLAlchemy 2 + psycopg3 (plain tables — plan-allowed) | ✅ |
 | LLM layer | Claude, phrasing only | **Anthropic Claude** in `services/llm.py`, strictly grounded, deterministic fallback | ✅ |
-| Data pipeline | Python batch loads (AIS, BTS, weather) | SimPy layer built; AIS/weather batch noted below | 🟡 |
+| Data pipeline | Python batch loads (AIS, BTS, weather) | SimPy layer ✅ + AIS pipeline (`app/pipelines/ais.py`) ✅; BTS/weather pending | 🟡 |
+| Agent (IBM Bob) | IBM Bob as an MCP client | `app/mcp_server.py` — **11 tools + 4 resources + 2 prompts**, tested via a local MCP client | ✅ surface built (register Bob) |
 
 **Verified running:** `build_full` (forecast→anomaly→hotspot→optimiser→routing→plan) executes end-to-end;
 `/api/*` return live engine data; Vite proxies `/api` and renders the dashboard.
@@ -106,7 +107,20 @@ The remaining gaps are feature-depth items (a few modules) rather than stack div
 
 ---
 
-## 5. What is DONE (verified running)
+## 5. Bob / agent integration (rubric #5)
+
+| Surface | Implementation | Status |
+|---|---|---|
+| IBM Bob via **MCP** | `app/mcp_server.py` exposes the engines as 11 MCP tools, 4 resources, 2 prompts; register with `src/backend/bob-mcp.config.json` | ✅ surface built + tested; Bob registration is the operator step |
+| In-app assistant | `services/bob.py` (shared brain) via `POST /api/bob` | ✅ |
+| Grounding | answers use ONLY engine JSON; `actions` metadata lists the tools run; deterministic fallback | ✅ |
+
+**Honest note:** IBM Bob itself is not installed in this environment, so it cannot be invoked here — but the
+integration surface it consumes (a standards-compliant MCP server) is implemented and verified with a local
+MCP client (`list_tools` + `call_tool` returned live engine data). Once Bob is pointed at the server
+(`docs/bob-mcp.md`), Bob drives LightGBM / OR-Tools CP-SAT / routing directly.
+
+## 5b. What is DONE (verified running)
 
 - SimPy DES → vessel calls, ETA revisions, 14-day hourly congestion series, yard/gate state.
 - LightGBM forecast (4 targets) with quantile bands, model version, per-horizon validation, feature importance.
@@ -114,6 +128,7 @@ The remaining gaps are feature-depth items (a few modules) rather than stack div
 - Composite hotspot risk score with binding-resource attribution.
 - OR-Tools CP-SAT BAP/QCAP with hard constraints + FIFO baseline + measured deltas (CP-SAT ran `OPTIMAL`/`FEASIBLE`; e.g. −19 % total wait, −55 h makespan vs FIFO on the seeded instance).
 - Routing recommender (4 options, sustained check, cost model), 72h plan, Claude narrative + deterministic fallback.
+- **MCP server** exposing 11 engine tools + resources + prompts for IBM Bob, verified with a local MCP client.
 - FastAPI gateway (12 routes), PostgreSQL persistence of every run, CSV export, caching (22 s → 1.7 s).
 - React/Vite dashboard (6 tabs, Recharts, Gantt, scenario sliders, Bob chat) — builds clean and proxies the API.
 

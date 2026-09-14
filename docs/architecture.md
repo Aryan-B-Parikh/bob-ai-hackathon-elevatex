@@ -50,6 +50,8 @@ flowchart TB
     BOB -->|Claude| LLM["Anthropic Claude<br/>(phrasing only)"]
     PIPE --> API["/api/* (FastAPI routers)"]
     API --> UI
+    PIPE --> MCP["app/mcp_server.py<br/>MCP tools · resources · prompts"]
+    MCP --> BOBAGENT["IBM Bob (MCP client)"]
 ```
 
 **Data flow in words.** `seed.py` loads the REAL POLB terminal/berth/crane/yard/gate reference tables, then
@@ -80,6 +82,8 @@ React dashboard consumes it.
 | `backend/app/services/routing.py` | divert / slow-steam / priority / hold | rule engine |
 | `backend/app/services/plan.py` | 12 × 6h plan (JSON + text) | — |
 | `backend/app/services/llm.py` | plan narrative + grounded Q&A | **Anthropic Claude** |
+| `backend/app/services/bob.py` | Bob brain (engines → grounded answer); shared by API + MCP | — |
+| `backend/app/mcp_server.py` | MCP server: 11 tools + resources + prompts | **MCP (Model Context Protocol)** |
 | `backend/app/services/context.py` | DB → EngineContext (one t0) | SQLAlchemy |
 | `backend/app/services/pipeline.py` | orchestration + run persistence + caching | — |
 | `frontend/src/App.tsx` | 6-tab dashboard | **React + Vite + Tailwind + Recharts** |
@@ -94,13 +98,21 @@ RoutingRecommendation → OperationsPlan → Scenario → ImpactAssessment (+Cha
 `Terminal`/`Berth` capacity columns are REAL POLB fact-sheet figures; `VesselCall` and
 `CongestionObservation` are the labelled `DEMO_AIS` synthetic layer (replaceable by the AIS pipeline).
 
-## Bob integration (load-bearing)
+## Bob integration (load-bearing) — two surfaces, one brain
 
-`POST /api/bob` → intent detection → the matching **engine pack actually runs** the forecast / optimiser /
-routing / plan services → the engine JSON becomes an `ENGINE DATA` block → **Claude** answers strictly
-from it (if `ANTHROPIC_API_KEY` is set) → the reply is persisted with the `actions` list and `mode`
-(`llm` | `deterministic`). Without a key (or on failure) Bob returns a deterministic answer built from the
-**same engine output**, so the numbers are always engine-computed.
+Both surfaces use `services/bob.py`, so the in-app assistant and IBM Bob behave identically.
+
+1. **in-app (`POST /api/bob`)** → intent detection → the matching **engine pack actually runs** the
+   forecast / optimiser / routing / plan services → the engine JSON becomes an `ENGINE DATA` block →
+   **Claude** answers strictly from it (if `ANTHROPIC_API_KEY` is set) → the reply is persisted with the
+   `actions` list and `mode` (`llm` | `deterministic`).
+2. **IBM Bob via MCP (`app/mcp_server.py`)** → Bob registers our MCP server and calls 11 engine tools
+   (`forecast_congestion`, `rank_hotspots`, `optimise_berth_cranes`, `recommend_routing`,
+   `generate_operations_plan`, `simulate_scenario`, …), reads 4 resources and uses 2 prompts. Each call
+   actually runs LightGBM / OR-Tools CP-SAT / routing; Bob phrases the returned numbers.
+
+Without an LLM key (or on failure) the answer is built deterministically from the **same engine output**,
+so the numbers are always engine-computed. Registration + tool catalogue: [`bob-mcp.md`](bob-mcp.md).
 
 ## Mapping to the hackathon template
 
