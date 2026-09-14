@@ -26,4 +26,7 @@ def forecast(db: Session = Depends(get_db), zone: str = Query("Z-PORT")):
         "selected": forecast_to_dict(full["forecasts"][zone]),
         "hotspots": full["hotspots"],
         "anomalies": full["anomalies"],
+        # --- Phase 0 freeze (W2 fills these) ---
+        "weather_used": False,
+        "confidence": 1.0,
     }

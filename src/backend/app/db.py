@@ -35,6 +35,30 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
 
 
+# Phase 0 interface freeze: additive columns on pre-existing tables (Postgres
+# `ADD COLUMN IF NOT EXISTS` keeps data; `create_all` only creates new tables).
+_NEW_COLUMNS = [
+    "ALTER TABLE vessel_call ADD COLUMN IF NOT EXISTS voyage_number VARCHAR(40)",
+    "ALTER TABLE vessel_call ADD COLUMN IF NOT EXISTS normalised JSONB",
+    "ALTER TABLE forecast_run ADD COLUMN IF NOT EXISTS data_version VARCHAR(64)",
+    "ALTER TABLE forecast_run ADD COLUMN IF NOT EXISTS feature_flags JSONB",
+    "ALTER TABLE routing_recommendation ADD COLUMN IF NOT EXISTS option_detail JSONB",
+    "ALTER TABLE operations_plan ADD COLUMN IF NOT EXISTS confidence_json JSONB",
+    "ALTER TABLE scenario ADD COLUMN IF NOT EXISTS parent_scenario_id INTEGER",
+    "ALTER TABLE scenario ADD COLUMN IF NOT EXISTS status VARCHAR(16) DEFAULT 'DRAFT'",
+]
+
+
+def ensure_schema() -> None:
+    """Create new tables and add the frozen Phase-0 columns (idempotent, non-destructive)."""
+    from sqlalchemy import text
+
+    init_db()
+    with engine.begin() as conn:
+        for stmt in _NEW_COLUMNS:
+            conn.execute(text(stmt))
+
+
 def drop_all() -> None:
     from . import models  # noqa: F401
 

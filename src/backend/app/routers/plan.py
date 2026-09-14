@@ -20,6 +20,7 @@ router = APIRouter(prefix="/api", tags=["plan"])
 def get_plan(db: Session = Depends(get_db), text: int = Query(0), persist: int = Query(0)):
     full = pipeline.build_full(db, persist=bool(persist))
     out = full["plan"]
+    out["summary"].setdefault("confidence_by_bucket", {})  # Phase 0 freeze (W3 fills)
     if persist:
         pipeline.persist_plan(db, out)
     if text:
@@ -30,6 +31,7 @@ def get_plan(db: Session = Depends(get_db), text: int = Query(0), persist: int =
 @router.post("/plan")
 def regenerate(db: Session = Depends(get_db)):
     full = pipeline.build_full(db, persist=True)
+    full["plan"]["summary"].setdefault("confidence_by_bucket", {})  # Phase 0 freeze (W3 fills)
     plan_id = pipeline.persist_plan(db, full["plan"])
     return {**full["plan"], "plan_id": plan_id}
 

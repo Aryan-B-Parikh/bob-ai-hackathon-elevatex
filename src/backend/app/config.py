@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     sim_seed: int = 20240817
     sim_horizon_hours: int = 72
 
+    # ---- Phase 0 feature flags (each owner flips their flag on when the feature lands) ----
+    feature_weather: bool = False       # W1 weather pipeline + W2 weather features
+    feature_quality: bool = False       # W1 normalisation + completeness score
+    feature_upload: bool = False        # W1 CSV schedule upload / ETA revisions
+    feature_tidal: bool = False         # W3 tidal windows in CP-SAT
+    feature_incremental: bool = False   # W3 CP-SAT warm-start re-optimise
+    feature_scenarios_ext: bool = False # W3 berth/bunching scenarios + rollback
+
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

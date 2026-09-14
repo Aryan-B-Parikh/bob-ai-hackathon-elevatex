@@ -44,9 +44,34 @@ routing · 72h plan · FastAPI (12 routes) · PostgreSQL persistence · React/Vi
 
 ---
 
-## 2. Phase 0 — Interface Freeze (do this together, ~3 h, ONE commit)
+## 2. Phase 0 — Interface Freeze — ✅ **DONE**
 
-> Nothing else starts until this commit is on `main`. This is the single most important step for clean merges.
+> Committed on `main`. **Start your workstream from this commit — do not re-do Phase 0.**
+> If you need a change to a frozen interface, ask the Integrator (additive only).
+
+**What is now on `main`:**
+
+| Phase-0 item | Status | Where |
+|---|---|---|
+| New DB tables + columns | ✅ applied to PostgreSQL | `app/models.py`, `app/db.py::ensure_schema()` (`ADD COLUMN IF NOT EXISTS`, non-destructive) |
+| New tables | ✅ `weather_observation`, `terminal_quality`, `tidal_window`, `vessel_schedule_upload` | `app/models.py` |
+| Frozen API stubs | ✅ all return the documented shape with `stub: true` | `routers/quality.py`, `routers/anomalies.py`, `routers/scenarios.py`, `routers/catalog.py` (`/api/vessels/upload`) |
+| Frozen keys on existing routes | ✅ `forecast.weather_used/confidence`, `optimise.tidal_feasible/incremental`, `plan.summary.confidence_by_bucket` | `routers/forecast.py`, `optimise.py`, `plan.py` |
+| Anomalies moved to its own router | ✅ | `routers/anomalies.py` |
+| Scenario endpoints moved out of `optimise.py` | ✅ | `routers/scenarios.py` |
+| Frontend split into files | ✅ 6 tabs + `components/ui.tsx` + `types.ts` | `src/frontend/src/` |
+| Feature flags | ✅ all default `false` | `app/config.py`, `.env.example` |
+| Tests + merge gate | ✅ **13 passing** (`uv run pytest -q`), `npm run build` green | `tests/contracts*.py`, `tests/engines.py` |
+| Frozen API contract doc | ✅ | [`docs/api-contract.md`](docs/api-contract.md) |
+
+**You can start now:** each workstream edits only its own files (matrix §4) and implements the logic behind the
+stubbed endpoint / flag it owns. Pull `main`, branch, code, run `uv run pytest tests/ -q` (+ `npm run build` for W4).
+
+---
+
+### (Reference) what Phase 0 froze — for the record
+
+**Old heading kept for context; all of the below is already committed.**
 
 **P0.1 — DB schema freeze** *(Integrator commits)* — add to `src/backend/app/models.py`:
 
@@ -101,8 +126,8 @@ After this, **W4 owns every file in `tabs/`** and no one else edits them.
 - `FEATURE_*` flags added to `config.py` (default `false`).
 - Add `pytest` to `pyproject.toml` dev deps; document `uv run pytest tests/ -q`.
 
-**Phase 0 exit criteria:** `main` has the new models + route stubs + split frontend + tests; `uv run pytest -q`
-passes; `npm run build` passes; `docs/api-contract.md` committed.
+**Phase 0 exit criteria:** ✅ met — new models + route stubs + split frontend + tests all on `main`;
+`uv run pytest -q` green; `npm run build` green; `docs/api-contract.md` committed.
 
 ---
 

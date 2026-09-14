@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -54,13 +54,16 @@ def vessels(db: Session = Depends(get_db)):
     return {"vessels": rows}
 
 
-@router.get("/anomalies")
-def anomalies(db: Session = Depends(get_db)):
-    full = pipeline.build_full(db, persist=False)
-    return {"anomalies": full["anomalies"]}
-
-
 @router.get("/hotspots")
 def hotspots(db: Session = Depends(get_db)):
     full = pipeline.build_full(db, persist=False)
     return full["hotspots"]
+
+
+@router.post("/vessels/upload")
+async def upload_schedule(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """CSV/EDI vessel-schedule upload (Module B). FROZEN SHAPE:
+    {accepted, rejected, errors:[], revisions_created, upload_id, filename, stub}"""
+    raw = await file.read()  # W1: parse in pipelines/schedule.py, dedupe on IMO+voyage_number
+    return {"accepted": 0, "rejected": 0, "errors": [], "revisions_created": 0,
+            "upload_id": None, "filename": file.filename, "bytes": len(raw), "stub": True}

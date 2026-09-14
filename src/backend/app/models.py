@@ -149,6 +149,9 @@ class VesselCall(Base):
     unresolved: Mapped[bool] = mapped_column(Boolean, default=False)   # missing/incomplete data flag
     data_confidence: Mapped[float] = mapped_column(Float, default=1.0) # 0..1 record quality
     raw: Mapped[dict | None] = mapped_column(JSONB)                    # original units/values
+    # --- Phase 0 freeze (W1): schedule dedupe key + unit-normalisation ledger ---
+    voyage_number: Mapped[str | None] = mapped_column(String(40), index=True)
+    normalised: Mapped[dict | None] = mapped_column(JSONB)             # {field: {original, unit, value_si}}
 
     @property
     def eta_hours(self) -> float:
@@ -204,6 +207,9 @@ class ForecastRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     horizon_hours: Mapped[int] = mapped_column(Integer, default=72)
     metrics: Mapped[dict | None] = mapped_column(JSONB)        # per-zone MAE/R2/skill + quantile coverage
+    # --- Phase 0 freeze (W2): provenance/registry ---
+    data_version: Mapped[str | None] = mapped_column(String(64))
+    feature_flags: Mapped[dict | None] = mapped_column(JSONB)
 
     points: Mapped[list["ForecastPoint"]] = relationship(back_populates="run", cascade="all,delete")
     hotspots: Mapped[list["HotspotFlag"]] = relationship(back_populates="run", cascade="all,delete")
@@ -313,6 +319,8 @@ class RoutingRecommendation(Base):
     tier: Mapped[str] = mapped_column(String(16))
     rationale: Mapped[str | None] = mapped_column(Text)
     sustained: Mapped[bool] = mapped_column(Boolean, default=False)   # sustained congestion, not 1 noisy pt
+    # --- Phase 0 freeze (W3): in-port terminal / berthing-window detail ---
+    option_detail: Mapped[dict | None] = mapped_column(JSONB)
 
 
 # --------------------------------------------------------------------------- K/L
@@ -328,6 +336,8 @@ class OperationsPlan(Base):
     shifts: Mapped[list | None] = mapped_column(JSONB)
     text_plan: Mapped[str] = mapped_column(Text)
     narrative_source: Mapped[str] = mapped_column(String(16), default="deterministic")  # llm | deterministic
+    # --- Phase 0 freeze (W3): per-horizon confidence ---
+    confidence_json: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class Scenario(Base):
@@ -339,6 +349,9 @@ class Scenario(Base):
     base_run_id: Mapped[int | None] = mapped_column(ForeignKey("optimiser_run.id", ondelete="SET NULL"))
     params: Mapped[dict | None] = mapped_column(JSONB)
     kind: Mapped[str] = mapped_column(String(24), default="CRANE_OUTAGE")
+    # --- Phase 0 freeze (W3): clone lineage + rollback state ---
+    parent_scenario_id: Mapped[int | None] = mapped_column(ForeignKey("scenario.id", ondelete="SET NULL"))
+    status: Mapped[str] = mapped_column(String(16), default="DRAFT")   # DRAFT | APPLIED | ROLLED_BACK
 
 
 class ImpactAssessment(Base):
@@ -362,3 +375,64 @@ class ChatMessage(Base):
     role: Mapped[str] = mapped_column(String(16))               # user | assistant
     content: Mapped[str] = mapped_column(Text)
     meta: Mapped[dict | None] = mapped_column(JSONB)            # actions, mode (llm|deterministic), evidence
+
+
+# ===========================================================================
+# Phase 0 interface freeze — new tables owned by W1 / W3.
+# ===========================================================================
+class WeatherObservation(Base):
+    """W1: Open-Meteo wind/wave/visibility series for San Pedro Bay."""
+
+    __tablename__ = "weather_observation"
+    __table_args__ = (UniqueConstraint("hours_ago", name="uq_weather_hours"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    hours_ago: Mapped[int] = mapped_column(Integer)             # 0 = now, negative = forecast ahead
+    wind_kn: Mapped[float | None] = mapped_column(Float)
+    gust_kn: Mapped[float | None] = mapped_column(Float)
+    wave_m: Mapped[float | None] = mapped_column(Float)
+    visibility_km: Mapped[float | None] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(24), default="OPEN_METEO")
+    confidence: Mapped[float] = mapped_column(Float, default=0.8)
+
+
+class TerminalQuality(Base):
+    """W1: per-terminal data-completeness score (Module D)."""
+
+    __tablename__ = "terminal_quality"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    terminal_id: Mapped[int] = mapped_column(ForeignKey("terminal.id", ondelete="CASCADE"), index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completeness_pct: Mapped[float] = mapped_column(Float)
+    missing: Mapped[list | None] = mapped_column(JSONB)          # ["draft_ft", "reefer_units", ...]
+    rules_version: Mapped[str] = mapped_column(String(24), default="v1")
+
+
+class TidalWindow(Base):
+    """W3: berth draft availability over time (time-varying depth constraint)."""
+
+    __tablename__ = "tidal_window"
+    __table_args__ = (UniqueConstraint("berth_id", "hours_ago", name="uq_tide_berth_hours"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    berth_id: Mapped[int] = mapped_column(ForeignKey("berth.id", ondelete="CASCADE"), index=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    hours_ago: Mapped[int] = mapped_column(Integer)
+    min_depth_ft: Mapped[float] = mapped_column(Float)
+    note: Mapped[str | None] = mapped_column(String(80))
+
+
+class VesselScheduleUpload(Base):
+    """W1: audit row for a CSV/EDI schedule upload (Module B)."""
+
+    __tablename__ = "vessel_schedule_upload"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    filename: Mapped[str] = mapped_column(String(200))
+    rows: Mapped[int] = mapped_column(Integer, default=0)
+    accepted: Mapped[int] = mapped_column(Integer, default=0)
+    rejected: Mapped[int] = mapped_column(Integer, default=0)
+    report: Mapped[dict | None] = mapped_column(JSONB)          # {errors:[...], created:[...]}

@@ -15,7 +15,7 @@ import sys
 from sqlalchemy import delete, select
 
 from . import reference as ref
-from .db import SessionLocal, init_db
+from .db import SessionLocal, ensure_schema
 from .models import (
     AnomalyFlag,
     Assignment,
@@ -49,7 +49,7 @@ def _clear(db) -> None:
 
 
 def seed(reset: bool = False) -> None:
-    init_db()
+    ensure_schema()
     db = SessionLocal()
     try:
         _clear(db)
