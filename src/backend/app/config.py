@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # database
-    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/portflow"
+    database_url: str = "sqlite:///./portflow.db"
     db_echo: bool = False
 
     # api
@@ -32,9 +32,9 @@ class Settings(BaseSettings):
     sim_horizon_hours: int = 72
 
     # ---- Phase 0 feature flags (each owner flips their flag on when the feature lands) ----
-    feature_weather: bool = False       # W1 weather pipeline + W2 weather features
-    feature_quality: bool = False       # W1 normalisation + completeness score
-    feature_upload: bool = False        # W1 CSV schedule upload / ETA revisions
+    feature_weather: bool = True       # W1 weather pipeline + W2 weather features
+    feature_quality: bool = True       # W1 normalisation + completeness score
+    feature_upload: bool = True        # W1 CSV schedule upload / ETA revisions
     feature_tidal: bool = False         # W3 tidal windows in CP-SAT
     feature_incremental: bool = False   # W3 CP-SAT warm-start re-optimise
     feature_scenarios_ext: bool = False # W3 berth/bunching scenarios + rollback
