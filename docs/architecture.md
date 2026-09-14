@@ -98,21 +98,24 @@ RoutingRecommendation → OperationsPlan → Scenario → ImpactAssessment (+Cha
 `Terminal`/`Berth` capacity columns are REAL POLB fact-sheet figures; `VesselCall` and
 `CongestionObservation` are the labelled `DEMO_AIS` synthetic layer (replaceable by the AIS pipeline).
 
-## Bob integration (load-bearing) — two surfaces, one brain
+## Bob integration (load-bearing) — two directions, one brain
 
-Both surfaces use `services/bob.py`, so the in-app assistant and IBM Bob behave identically.
+`services/bob.py` is the shared brain; `services/bob_agent.py` makes **IBM Bob itself** the narrative
+engine. `services/llm.py` resolves the provider (`LLM_PROVIDER=auto|bob|claude|deterministic`).
 
-1. **in-app (`POST /api/bob`)** → intent detection → the matching **engine pack actually runs** the
-   forecast / optimiser / routing / plan services → the engine JSON becomes an `ENGINE DATA` block →
-   **Claude** answers strictly from it (if `ANTHROPIC_API_KEY` is set) → the reply is persisted with the
-   `actions` list and `mode` (`llm` | `deterministic`).
-2. **IBM Bob via MCP (`app/mcp_server.py`)** → Bob registers our MCP server and calls 11 engine tools
+1. **Bob → our engines (MCP).** Bob registers `app/mcp_server.py` and calls 11 engine tools
    (`forecast_congestion`, `rank_hotspots`, `optimise_berth_cranes`, `recommend_routing`,
    `generate_operations_plan`, `simulate_scenario`, …), reads 4 resources and uses 2 prompts. Each call
-   actually runs LightGBM / OR-Tools CP-SAT / routing; Bob phrases the returned numbers.
+   actually runs LightGBM / OR-Tools CP-SAT / routing.
+2. **Our app → Bob.** `POST /api/bob` and the 72h plan narrative run the **real Bob agent**
+   (`bob run --format stream-json`); Bob fetches the data with the MCP tools above and answers from it.
+   Every reply reports `provider` (`bob` \| `claude` \| `deterministic`) and the `actions` (MCP tool
+   names) Bob executed, e.g.
+   `provider=bob · mode=llm · actions=['mcp__portflow__rank_hotspots']`.
 
-Without an LLM key (or on failure) the answer is built deterministically from the **same engine output**,
-so the numbers are always engine-computed. Registration + tool catalogue: [`bob-mcp.md`](bob-mcp.md).
+Recursion guard: the Bob child inherits `PORTFLOW_NO_BOB_AGENT=1`, so the MCP server's
+`ask_operations_question` never re-enters Bob. Without a key the answer falls back to Claude, then to a
+deterministic template over the **same engine numbers**. Registration + tool catalogue: [`bob-mcp.md`](bob-mcp.md).
 
 ## Mapping to the hackathon template
 

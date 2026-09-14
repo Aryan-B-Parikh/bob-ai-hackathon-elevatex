@@ -40,14 +40,15 @@ A **SimPy** discrete-event simulation generates the synthetic berth/crane/yard/g
 
 Cross-cutting: KPIs / hotspots / anomalies via `pipeline.py` → `GET /api/overview`; Bob via `services/bob.py` → `GET`/`POST /api/bob`.
 
-### 🤖 IBM Bob integration (MCP)
+### 🤖 IBM Bob integration — load-bearing in **both** directions
 
-IBM Bob is a first-class consumer of the engines through a **Model Context Protocol server**
-(`src/backend/app/mcp_server.py`): Bob calls **11 tools** (`forecast_congestion`, `rank_hotspots`,
-`optimise_berth_cranes`, `recommend_routing`, `generate_operations_plan`, `simulate_scenario`, …),
-**4 resources** and **2 prompts**, and each call actually runs LightGBM / OR-Tools CP-SAT / routing.
-The dashboard's **Bob AI** tab uses the same `services/bob.py` brain. Register Bob with the config in
-[`docs/bob-mcp.md`](docs/bob-mcp.md) (`src/backend/bob-mcp.config.json`).
+| Direction | Flow |
+|---|---|
+| **Bob → engines** | Bob (CLI/agent) calls our **MCP server** (`src/backend/app/mcp_server.py`): **11 tools** + 4 resources + 2 prompts; each call actually runs LightGBM / OR-Tools CP-SAT / routing. |
+| **App → Bob** | The dashboard's **Bob AI** tab and the 72h **plan narrative** run on the **real IBM Bob agent** (`services/bob_agent.py`) — Bob fetches the numbers through our MCP tools. `provider` is reported per answer (`bob` \| `claude` \| `deterministic`). |
+
+So Bob is not a wrapper: the app *is* Bob for its narrative layer, and Bob *is* the agent that drives our engines.
+Setup + registration: [`docs/bob-mcp.md`](docs/bob-mcp.md) (`LLM_PROVIDER=auto` + `BOB_API_KEY`).
 
 ---
 

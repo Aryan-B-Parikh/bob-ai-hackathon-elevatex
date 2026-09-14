@@ -108,26 +108,44 @@ def deterministic_answer(intent: str, pack: dict) -> str:
             f"berth util {k['berth_util_pct']}%, crane util {k['crane_util_pct']}%.")
 
 
+def _persist(db: Session, message: str, out: dict) -> None:
+    db.add(ChatMessage(role="user", content=message, meta={"intent": out["intent"]}))
+    db.add(ChatMessage(role="assistant", content=out["content"],
+                       meta={"actions": out["actions"], "mode": out["mode"],
+                             "provider": out["provider"], "intent": out["intent"]}))
+    db.commit()
+
+
 def respond(db: Session, message: str, persist: bool = True) -> dict:
     """Run the engines for the message's intent and return Bob's grounded answer."""
     intent = detect_intent(message)
+
+    # ---- preferred: the REAL IBM Bob agent answers, fetching data via our MCP tools
+    if llm.provider() == "bob":
+        meta = llm.answer_meta(message)
+        if meta["text"]:
+            out = {"content": meta["text"], "actions": meta["actions"] or ["bob.agent"],
+                   "mode": "llm", "provider": "bob", "intent": intent,
+                   "tool_calls": meta.get("tool_calls", 0), "cost_usd": meta.get("cost_usd", 0.0),
+                   "engine_data": None}
+            if persist:
+                _persist(db, message, out)
+            return out
+        print("[bob] IBM Bob agent unavailable/failed - using the local engine pack")
+
+    # ---- fallback: run the engines locally and ground the LLM in their JSON
     full = pipeline.build_full(db, persist=False)
     pack, actions = build_pack(full, intent)
-    engine_data = json.dumps(pack, default=str)
-
-    text, mode = llm.answer(message, engine_data)
-    if not text:
-        mode = "deterministic"
-        text = deterministic_answer(intent, pack)
-
+    meta = llm.answer_meta(message, json.dumps(pack, default=str))
+    if not meta["text"]:
+        meta = {"text": deterministic_answer(intent, pack), "provider": "deterministic",
+                "actions": actions, "tool_calls": 0, "cost_usd": 0.0}
+    out = {"content": meta["text"], "actions": meta["actions"] or actions,
+           "mode": "llm" if meta["provider"] != "deterministic" else "deterministic",
+           "provider": meta["provider"], "intent": intent, "engine_data": pack}
     if persist:
-        db.add(ChatMessage(role="user", content=message, meta={"intent": intent}))
-        db.add(ChatMessage(role="assistant", content=text,
-                           meta={"actions": actions, "mode": mode, "intent": intent}))
-        db.commit()
-
-    return {"content": text, "actions": actions, "mode": mode, "intent": intent,
-            "engine_data": pack}
+        _persist(db, message, out)
+    return out
 
 
 __all__ = ["detect_intent", "build_pack", "deterministic_answer", "respond", "INTENTS"]

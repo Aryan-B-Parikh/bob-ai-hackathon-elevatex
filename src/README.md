@@ -26,7 +26,8 @@ src/
 │   │       ├── routing.py       # DIVERT / SLOW_STEAM / PRIORITY_WINDOW / HOLD rule engine
 │   │       ├── plan.py          # 12 × 6h operations plan (JSON + printable text)
 │   │       ├── bob.py           # Bob brain (shared by the API router and the MCP server)
-│   │       ├── llm.py           # Claude (Anthropic) narrative — phrasing only
+│   │       ├── bob_agent.py     # IBM Bob provider: runs the real Bob agent (stream-json)
+│   │       ├── llm.py           # provider resolution: bob → claude → deterministic
 │   │       ├── context.py       # DB → shared engine context (one model time t0)
 │   │       └── pipeline.py      # orchestration + persistence
 │   ├── pyproject.toml           # Python deps (uv)
@@ -63,7 +64,7 @@ AccessAIS → congestion-series batch load).
 | Optimisation (BAP/QCAP) | Google OR-Tools **CP-SAT** | `backend/app/services/optimiser.py` |
 | Routing | rule + cost model | `backend/app/services/routing.py` |
 | 72h plan | assembler + **Claude** narrative | `backend/app/services/plan.py`, `llm.py` |
-| Bob (in-app + IBM Bob) | shared brain + **MCP server** | `backend/app/services/bob.py`, `backend/app/mcp_server.py` |
+| Bob (in-app + IBM Bob) | shared brain + **MCP server** + **Bob agent provider** | `backend/app/services/bob.py`, `bob_agent.py`, `backend/app/mcp_server.py` |
 | Persistence | PostgreSQL (SQLAlchemy 2 + psycopg3) | `backend/app/models.py`, `db.py` |
 | Data pipeline (batch) | NOAA AccessAIS → congestion series | `backend/app/pipelines/ais.py` |
 | Dashboard | React + Vite + Tailwind + Recharts | `frontend/` |
