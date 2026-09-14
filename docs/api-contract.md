@@ -14,8 +14,8 @@ Base URL: `http://localhost:8000`. All JSON unless noted. `stub: true` marks a P
 | GET | `/api/overview` | Integrator | `{t0, dataset, kpis, zones[], alerts[], hotspots, anomalies[], arrivals_timeline[]}` |
 | GET | `/api/forecast?zone=` | W2 | `{t0, dataset_source, summary{}, selected{}, hotspots, anomalies, weather_used, confidence}` |
 | GET | `/api/optimise/latest` | W3 | `{run_id, solver, status, objective, solve_ms, assignments[], metrics, baseline, deltas, deferred[], weights, tidal_feasible, incremental}` |
-| POST | `/api/optimise` | W3 | as `/latest` + `tidal_feasible`, `incremental` |
-| GET | `/api/routing` | W3 | `{recommendations[], counts{}, total_savings_usd, cost_model}` |
+| POST | `/api/optimise` | W3 | as `/latest` + `tidal_feasible`, `incremental`, `gap_pct`. Request body: `{crane_factor, move_rate_per_crane_hour, incremental?, tidal?}` |
+| GET | `/api/routing` | W3 | `{recommendations[{…, option_detail:{rule, berthing_window, alternate_terminal}}], counts{}, total_savings_usd, cost_model}` |
 | GET | `/api/plan?text=1` | W3 | `{summary{…, confidence_by_bucket{}}, shifts[], text}` |
 | POST | `/api/plan` | W3 | as GET + `plan_id`, `narrative`, `narrative_source` |
 | GET | `/api/terminals` | W1 | `{terminals[{code,name,pier,berth_length_ft,deepsea_berths,gantry_cranes,capacity_teu_m,zone_code,note,berths[],cranes[],yard_zones[],gate}], source}` |
@@ -33,8 +33,8 @@ Base URL: `http://localhost:8000`. All JSON unless noted. `stub: true` marks a P
 | POST | `/api/vessels/upload` | W1 | `FEATURE_UPLOAD` | `{accepted, rejected, errors:[], revisions_created, upload_id, filename}` |
 | GET | `/api/anomalies` | W2 | — | `{anomalies:[{zone_code, kind, method, score, is_anomaly, sample_size, detail, features}]}` |
 | POST | `/api/scenarios` | W3 | — | `{scenario_id, params, baseline, scenario, impact, weights, solver}` |
-| POST | `/api/scenarios/extended` | W3 | `FEATURE_SCENARIOS_EXT` | `{baseline, scenario, impact, feasible, kind, parent_scenario_id}` |
-| POST | `/api/scenarios/{id}/rollback` | W3 | `FEATURE_SCENARIOS_EXT` | `{restored, scenario_id}` |
+| POST | `/api/scenarios/extended` | W3 | `FEATURE_SCENARIOS_EXT` | `{baseline, scenario, impact{…}, feasible, kind, parent_scenario_id, scenario_id, description, solver}` · request: `{kind, crane_factor, move_rate_per_crane_hour, terminal_code?, berth_count_delta?, bunching_vessels?, schedule_shift_hours?, parent_scenario_id?}` · 400 on contradictory params |
+| POST | `/api/scenarios/{id}/rollback` | W3 | `FEATURE_SCENARIOS_EXT` | `{restored, scenario_id, status}` (404 if unknown) |
 
 ## Shared DB fields added in Phase 0 (see `app/models.py`)
 

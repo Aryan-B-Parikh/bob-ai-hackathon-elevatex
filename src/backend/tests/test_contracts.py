@@ -110,6 +110,14 @@ def test_upload_stub_shape(client):
 
 
 @requires_db
-def test_scenario_extended_stub_shape(client):
-    body = client.post("/api/scenarios/extended", json={"kind": "BUNCHING"}).json()
+def test_scenario_extended_shape(client):
+    body = client.post("/api/scenarios/extended", json={"kind": "CRANE_OUTAGE"}).json()
     assert {"baseline", "scenario", "impact", "feasible"} <= set(body)
+    assert {"serviced", "moves", "avg_wait", "makespan"} <= set(body["impact"])
+
+
+@requires_db
+def test_scenario_extended_validates_contradictions(client):
+    # L requirement: contradictory parameters must not be applied silently
+    r = client.post("/api/scenarios/extended", json={"kind": "BERTH_REMOVED", "terminal_code": "PCT"})
+    assert r.status_code == 400

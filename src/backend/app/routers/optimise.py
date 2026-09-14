@@ -22,6 +22,7 @@ class ScenarioBody(BaseModel):
     crane_factor: float = Field(1.0, ge=0.5, le=1.0, description="crane availability multiplier")
     move_rate_per_crane_hour: float = Field(28.0, ge=20.0, le=35.0)
     incremental: bool = Field(False, description="warm-start from the previous CP-SAT solution (W3)")
+    tidal: bool = Field(False, description="enforce tidal windows on deep-draft vessels (W3)")
 
 
 @router.get("/optimise/latest")
@@ -40,17 +41,16 @@ def latest(db: Session = Depends(get_db)):
                             "terminal_id": b.terminal_id, "start_hour": a.start_hour,
                             "end_hour": a.end_hour, "cranes": a.cranes, "wait_hours": a.wait_hours,
                             "priority_score": a.priority_score})
+    p = run.params or {}
     return {"run_id": run.id, "solver": run.solver, "status": run.status, "objective": run.objective,
             "solve_ms": run.solve_ms, "assignments": assignments, "metrics": run.metrics,
             "baseline": run.baseline, "deltas": run.deltas, "deferred": run.deferred, "weights": run.weights,
-            "tidal_feasible": True, "incremental": False}  # W3 fills these
+            "tidal_feasible": p.get("tidal_feasible", True), "incremental": bool(p.get("incremental")),
+            "gap_pct": p.get("gap_pct")}
 
 
 @router.post("/optimise")
 def run_optimise(body: ScenarioBody, db: Session = Depends(get_db)):
     scenario = {"crane_factor": body.crane_factor, "move_rate_per_crane_hour": body.move_rate_per_crane_hour,
-                "incremental": body.incremental}
-    out = pipeline.build_full(db, scenario=scenario, persist=True)["optimiser"]
-    out["tidal_feasible"] = True   # W3: verify against TidalWindow
-    out["incremental"] = bool(body.incremental)
-    return out
+                "incremental": body.incremental, "tidal": body.tidal}
+    return pipeline.build_full(db, scenario=scenario, persist=True)["optimiser"]

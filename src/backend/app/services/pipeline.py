@@ -120,7 +120,12 @@ def run_hotspots(ctx: EngineContext, forecasts: dict, anomalies: list[dict], db:
 def run_optimiser(ctx: EngineContext, forecasts: dict, scenario: dict | None = None, db: Session | None = None) -> dict:
     global _opt_cache, _opt_cache_at
     scenario = scenario or {}
-    ckey = f"{ctx.t0.isoformat()}|{sorted(scenario.items())}"
+    # W3 fix: the cache key MUST include a context fingerprint — scenario runs mutate the
+    # context (berths/vessels) in memory, so keying on t0+scenario alone returned stale results.
+    ctx_sig = (len(ctx.vessels), len(ctx.berths),
+               sum(v.id for v in ctx.vessels) % 10_000_019,
+               sum(b.id for b in ctx.berths) % 1_000_003)
+    ckey = f"{ctx.t0.isoformat()}|{ctx_sig}|{sorted(scenario.items())}"
     if db is None and _opt_cache["key"] == ckey and _opt_cache["out"] and (time.time() - _opt_cache_at) < CACHE_TTL:
         return _opt_cache["out"]
     if db is None:
@@ -159,6 +164,7 @@ def run_routing(ctx: EngineContext, forecasts: dict, optimiser_out: dict, db: Se
                 eta_shift_hours=r.get("eta_shift_hours", 0), predicted_wait_hours=r["predicted_wait_hours"],
                 est_savings_usd=r["est_savings_usd"], confidence=r["confidence"], tier=r["tier"],
                 rationale=r.get("rationale"), sustained=bool(r.get("sustained")),
+                option_detail=r.get("option_detail"),   # W3: in-port alternates + berthing window
             ))
         db.commit()
     return recs
