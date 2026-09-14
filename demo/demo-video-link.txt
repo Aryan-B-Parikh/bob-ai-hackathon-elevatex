@@ -1,0 +1,14 @@
+PENDING — record the demo per demo/demo-video-script.md, then replace this line with the hosted video URL.
+
+Accepted platforms:
+  - YouTube (public or unlisted)
+  - Loom (https://www.loom.com/share/...)
+  - IBM Box (https://ibm.box.com/s/...)
+  - Google Drive (set to "Anyone with the link can view")
+
+Video requirements:
+  - Length: 3–5 minutes maximum
+  - Must show the application running (not just slides)
+  - Should walk through at least one key feature end-to-end
+  - Audio narration strongly recommended
+  - A ready-to-follow 9-shot script is provided in demo-video-script.md

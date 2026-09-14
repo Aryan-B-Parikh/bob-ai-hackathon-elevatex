@@ -1,0 +1,190 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* "Day shift" light theme — deliberate ops-center counterpart to the dark theme.
+   Same hue family: teal accent (175), teal-tinted slate surfaces, amber/rose
+   semantics matching the dark chart palette. Not default shadcn white. */
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.985 0.004 200);
+  --foreground: oklch(0.24 0.02 215);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.24 0.02 215);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.24 0.02 215);
+  --primary: oklch(0.62 0.11 175);
+  --primary-foreground: oklch(0.985 0.004 200);
+  --secondary: oklch(0.955 0.008 195);
+  --secondary-foreground: oklch(0.32 0.025 210);
+  --muted: oklch(0.955 0.008 195);
+  --muted-foreground: oklch(0.47 0.02 205);
+  --accent: oklch(0.94 0.015 190);
+  --accent-foreground: oklch(0.32 0.025 210);
+  --destructive: oklch(0.55 0.2 25);
+  --border: oklch(0.9 0.012 200);
+  --input: oklch(0.895 0.014 200);
+  --ring: oklch(0.62 0.11 175 / 50%);
+  --chart-1: oklch(0.62 0.11 175); /* teal */
+  --chart-2: oklch(0.72 0.14 75); /* amber */
+  --chart-3: oklch(0.58 0.19 20); /* rose */
+  --chart-4: oklch(0.6 0.12 155); /* green */
+  --chart-5: oklch(0.66 0.15 55); /* orange */
+  --sidebar: oklch(0.97 0.006 200);
+  --sidebar-foreground: oklch(0.24 0.02 215);
+  --sidebar-primary: oklch(0.62 0.11 175);
+  --sidebar-primary-foreground: oklch(0.985 0.004 200);
+  --sidebar-accent: oklch(0.94 0.015 190);
+  --sidebar-accent-foreground: oklch(0.32 0.025 210);
+  --sidebar-border: oklch(0.9 0.012 200);
+  --sidebar-ring: oklch(0.62 0.11 175 / 50%);
+}
+
+.dark {
+  --background: oklch(0.16 0.014 210);
+  --foreground: oklch(0.95 0.005 180);
+  --card: oklch(0.205 0.016 205);
+  --card-foreground: oklch(0.95 0.005 180);
+  --popover: oklch(0.21 0.018 205);
+  --popover-foreground: oklch(0.95 0.005 180);
+  --primary: oklch(0.78 0.13 175);
+  --primary-foreground: oklch(0.18 0.03 190);
+  --secondary: oklch(0.27 0.02 205);
+  --secondary-foreground: oklch(0.95 0.005 180);
+  --muted: oklch(0.26 0.018 205);
+  --muted-foreground: oklch(0.68 0.015 195);
+  --accent: oklch(0.28 0.025 195);
+  --accent-foreground: oklch(0.95 0.005 180);
+  --destructive: oklch(0.66 0.19 25);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.78 0.13 175 / 60%);
+  --chart-1: oklch(0.78 0.13 175);
+  --chart-2: oklch(0.8 0.15 80);
+  --chart-3: oklch(0.68 0.19 20);
+  --chart-4: oklch(0.72 0.14 155);
+  --chart-5: oklch(0.75 0.13 55);
+  --sidebar: oklch(0.19 0.016 205);
+  --sidebar-foreground: oklch(0.95 0.005 180);
+  --sidebar-primary: oklch(0.78 0.13 175);
+  --sidebar-primary-foreground: oklch(0.18 0.03 190);
+  --sidebar-accent: oklch(0.28 0.025 195);
+  --sidebar-accent-foreground: oklch(0.95 0.005 180);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.78 0.13 175 / 60%);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ops-center scrollbars */
+.dark ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.dark ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: oklch(0.4 0.02 200 / 70%);
+  border-radius: 8px;
+  border: 2px solid oklch(0.16 0.014 210);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.5 0.04 190 / 80%);
+}
+.dark ::selection {
+  background: oklch(0.78 0.13 175 / 30%);
+}
+
+/* --------------------------------------------------------------------------
+   Light-mode legibility layer ("day shift")
+   The dashboard tab components were written dark-first and use raw Tailwind
+   *-200/-300/-400 accent tones (text-teal-300, text-amber-400, text-rose-200…)
+   for severity badges, mono labels, trend arrows and icons. On the light
+   palette those light tones sit near-invisible (~1.8–2.6:1) on white cards.
+   Rather than editing those files, re-map ONLY the offending palette tokens
+   to darker same-hue equivalents, scoped to light mode so the dark theme
+   keeps Tailwind's original values untouched.
+   -------------------------------------------------------------------------- */
+html:not(.dark) {
+  --color-teal-300: oklch(0.5 0.08 175);
+  --color-teal-400: oklch(0.58 0.1 175);
+  --color-amber-200: oklch(0.5 0.1 70);
+  --color-amber-300: oklch(0.53 0.11 70);
+  --color-amber-400: oklch(0.62 0.13 75);
+  --color-amber-500: oklch(0.68 0.15 70);
+  --color-orange-300: oklch(0.55 0.13 45);
+  --color-orange-400: oklch(0.6 0.14 48);
+  --color-orange-500: oklch(0.65 0.16 50);
+  --color-rose-200: oklch(0.5 0.15 15);
+  --color-rose-300: oklch(0.53 0.16 15);
+  --color-rose-400: oklch(0.56 0.18 15);
+}
+
+/* light scrollbars + selection to mirror the dark ops-center styling */
+html:not(.dark) ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+html:not(.dark) ::-webkit-scrollbar-track {
+  background: transparent;
+}
+html:not(.dark) ::-webkit-scrollbar-thumb {
+  background: oklch(0.78 0.02 200 / 80%);
+  border-radius: 8px;
+  border: 2px solid oklch(0.985 0.004 200);
+}
+html:not(.dark) ::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.68 0.03 195 / 90%);
+}
+html:not(.dark) ::selection {
+  background: oklch(0.62 0.11 175 / 25%);
+}
