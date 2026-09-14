@@ -1,6 +1,6 @@
 # 🚀 PortFlow SBX — Container Congestion Predictor & Port Operations Optimiser
 
-> A 72-hour port-operations cockpit for San Pedro Bay (Ports of Long Beach / Los Angeles), built for the **Bob AI Hackathon** problem **L1 — Container Congestion Predictor & Port Operations Optimiser**.
+> A 72-hour port-operations cockpit for San Pedro Bay (Ports of Long Beach / Los Angeles), built for the **Bob AI Hackathon** problem **L1 — Container Congestion Predictor & Port Operations Optimiser**, on the technology stack from the project's technical plan (FastAPI · LightGBM · OR-Tools CP-SAT · SimPy · PostgreSQL · React/Vite · Claude).
 
 ---
 
@@ -17,37 +17,40 @@
 
 ## 🎯 Problem Statement
 
-San Pedro Bay — the twin Ports of Long Beach and Los Angeles, the largest container gateway in the Western Hemisphere — has no single operator view connecting *vessel arrivals*, *berth/crane capacity* and *live congestion*. In the 2021 backlog 100+ container ships waited offshore for weeks (the Marine Exchange queue peaked at roughly **109 vessels**, with **$10B+** in supply-chain impact) because hotspots were discovered reactively, berth and crane plans were built vessel-by-vessel in spreadsheets, and diversion decisions were taken too late to change the economics.
+San Pedro Bay — the twin Ports of Long Beach and Los Angeles, the largest container gateway in the Western Hemisphere — has no single operator view connecting *vessel arrivals*, *berth/crane capacity* and *live congestion*. In the 2021 backlog 100+ container ships waited offshore for weeks (the Marine Exchange queue peaked at roughly **109 vessels**, with **$10B+** in supply-chain impact) because hotspots were discovered reactively, berth and crane plans were built manually, and diversion decisions came too late to matter.
 
-Full analysis, 2021 evidence and the exact scope: [`docs/problem-statement.md`](docs/problem-statement.md).
+Full analysis and the exact scope: [`docs/problem-statement.md`](docs/problem-statement.md).
 
 ---
 
 ## 💡 Solution
 
-PortFlow SBX is a 72-hour port-operations cockpit that implements the four L1 challenge items end-to-end. A real **schedule-aware ridge-regression model** forecasts congestion hotspots 72 hours ahead with validated 80% bands; a **rule engine** recommends divert / slow-steam / priority-window routing priced through a documented cost model; a **three-phase optimiser** assigns berths and cranes under real Port of Long Beach terminal capacities and reports its measured deltas against a FIFO baseline; and a **12 × 6-hour shift plan** fuses all three for shift supervisors. **Bob**, the AI ops assistant, actually invokes those engines on every question and answers strictly from their computed output.
+PortFlow SBX forecasts congestion **before** it happens and hands a shift supervisor a **physically valid 72-hour plan**.
+
+A **SimPy** discrete-event simulation generates the synthetic berth/crane/yard/gate operations layer over the **REAL** Port of Long Beach terminal-capacity table. A **LightGBM** model (with quantile-regression bands) forecasts congestion across 24/48/72 h. A **scikit-learn Isolation Forest** detects disruptions, and a composite risk score names the **binding resource** (berth / crane / yard / gate). An **OR-Tools CP-SAT** solver performs berth allocation + quay-crane assignment under hard physical constraints, always contrasted with a **FIFO** baseline. A **FastAPI** gateway serves it all to a **React/Vite** dashboard and to **Bob**, the AI ops assistant, which runs the engines and (via **Claude**) phrases the grounded plan.
 
 ### The four challenge items — and where each lives
 
-| # | Challenge item | Engine code | API route | UI tab |
+| # | Challenge item | Engine code (Python) | API route | UI tab |
 |---|---|---|---|---|
-| 1 | Predict congestion hotspots using vessel schedules and berth capacity data | `src/lib/engine/forecast.ts` | `GET /api/forecast?zone=…` | **Forecast** |
-| 2 | Recommend alternate routing strategies | `src/lib/engine/routing.ts` | `GET /api/routing` | **Routing** |
-| 3 | Optimise berth and crane assignments | `src/lib/engine/optimiser.ts` | `GET`/`POST /api/optimise` | **Berth & Cranes** |
-| 4 | Generate a 72-hour port operations plan for shift supervisors | `src/lib/engine/plan.ts` | `GET`/`POST /api/plan` | **72-Hr Plan** |
+| 1 | Predict congestion hotspots | `src/backend/app/services/forecasting.py` (LightGBM) + `hotspot.py` | `GET /api/forecast?zone=…` | **Forecast** |
+| 2 | Recommend alternate routing | `src/backend/app/services/routing.py` | `GET /api/routing` | **Routing** |
+| 3 | Optimise berth & crane assignments | `src/backend/app/services/optimiser.py` (OR-Tools CP-SAT) | `GET`/`POST /api/optimise` | **Berth & Cranes** |
+| 4 | 72-hour operations plan | `src/backend/app/services/plan.py` (+ `llm.py`) | `GET`/`POST /api/plan` | **72-Hr Plan** |
 
-Cross-cutting: live KPIs and zone alerts come from `src/lib/engine/pipeline.ts` → `GET /api/overview` (**Overview** tab); Bob lives in `src/lib/engine/bob.ts` → `GET`/`POST /api/bob` (**Bob AI** tab). Algorithm details and every constant with its source: [`docs/solution-overview.md`](docs/solution-overview.md).
+Cross-cutting: KPIs / hotspots / anomalies via `pipeline.py` → `GET /api/overview`; Bob via `services/llm.py` → `GET`/`POST /api/bob`.
 
 ---
 
 ## ✨ Key Features
 
-- **Schedule-aware congestion forecasting:** ridge regression (λ = 3.0) with 14 features including ETA arrival pressure and berth load factor, 72-hour damped recursive rollout (δ = 0.75), 48-hour holdout + 12 multi-origin rollouts → 80% bands, per-horizon MAE/σ/bias validation.
-- **Berth & crane optimiser:** FIFO first-fit baseline vs a 3-phase priority-selection / ready-time-sequencing / swap + gap-insertion heuristic, constrained by real POLB terminal berth lengths, drafts and STS crane counts; a what-if scenario simulator impairs crane availability and productivity.
-- **Alternate-routing recommender:** `DIVERT` / `SLOW_STEAM` / `PRIORITY_WINDOW` / `HOLD` with a documented `$32k/day` ship-cost model, a cited alternate-port table and reefer-spoilage risk logic.
-- **72-hour operations plan:** 12 × 6-hour shift cards (arrivals, berthings, crane deployment, congestion alerts, decide-by deadlines, tickable supervisor checklist) plus a printable raw-text plan and JSON.
-- **Bob, the load-bearing AI assistant:** intent detection → *real* engine calls via the pipeline → strictly grounded prompt → LLM (backend-only) → tool-call metadata shown in the UI → deterministic engine-derived fallback.
-- **Operational extras:** what-if scenario simulator, vessel queue roster + detail dialogs, CSV exports (assignments / routing / vessels / forecast), model-validation view, and a light/dark theme toggle.
+- **SimPy operations layer** — every berth is a `simpy.Resource`; a discrete-event simulation generates vessel calls, ETA-revision history and the 14-day hourly congestion series (deterministic, seed `20240817`).
+- **LightGBM forecasting with quantile bands** — point model + quantile 0.1/0.9 regression per zone over 24/48/72 h; a per-horizon validation table (MAE / σ / bias) and skill-vs-persistence; a **model version** attached to every run.
+- **OR-Tools CP-SAT optimiser (BAP/QCAP)** — berth assignment, crane count and start time decided together under hard constraints (berth length/depth, crane reach, no berth overlap, terminal crane-pool capacity); a FIFO baseline is solved alongside for measured deltas; objective weights are exposed.
+- **Isolation Forest anomaly detection** — flags bunching / outage / yard saturation and distinguishes a likely **data error** from a real disruption; refuses to assert below a minimum sample size.
+- **Resource-binding hotspot scoring** — a composite risk score `w1·queue + w2·utilisation + w3·variance + w4·uncertainty + w5·disruption` that says *which resource is the bottleneck*, not just which berth is busiest.
+- **Bob, the load-bearing AI assistant** — intent → **real engine calls** → strictly grounded prompt → Claude (phrasing only) → tool-call metadata → deterministic fallback with no key.
+- **Operational extras** — what-if scenario simulator (crane availability / productivity), live real-POLB terminal/crane/yard/gate table, CSV exports, and a light/dark-ready dashboard.
 
 ---
 
@@ -55,11 +58,11 @@ Cross-cutting: live KPIs and zone alerts come from `src/lib/engine/pipeline.ts` 
 
 | Category | Technologies |
 |---|---|
-| **Languages** | TypeScript |
-| **Frameworks** | Next.js 16 (App Router), React 19, Tailwind CSS 4, shadcn/ui, Prisma |
+| **Languages** | Python 3.11, TypeScript |
+| **Frameworks** | FastAPI, React, Vite, Tailwind CSS, SQLAlchemy 2, LightGBM, scikit-learn, Google OR-Tools (CP-SAT), SimPy |
 | **IBM Technologies** | IBM Bob (AI ops assistant) |
-| **Databases** | PostgreSQL (via Prisma) |
-| **Other** | Bun, TanStack Query, Recharts, next-themes, z-ai-web-dev-sdk (backend LLM SDK), NOAA AccessAIS real-data pipeline |
+| **Databases** | PostgreSQL (psycopg3) |
+| **Other** | Anthropic Claude (plan narrative, phrasing only), Recharts, uv, NOAA AccessAIS pipeline, Open-Meteo |
 
 ---
 
@@ -67,70 +70,58 @@ Cross-cutting: live KPIs and zone alerts come from `src/lib/engine/pipeline.ts` 
 
 ```
 bob-ai-hackathon-elevatex/
-├── src/                      # The complete application (app root — run commands from here)
-│   ├── app/                  # App Router: dashboard page + /api/* route handlers
-│   ├── components/dashboard/ # The 6 feature tabs + shared widgets
-│   ├── components/ui/        # shadcn/ui primitives
-│   ├── hooks/                # toast + mobile hooks
-│   ├── lib/engine/           # forecast, optimiser, routing, plan, pipeline, bob
-│   ├── lib/                  # typed API client, Prisma client, utils
-│   ├── prisma/               # schema.prisma + deterministic seed
-│   ├── scripts/ais/          # real NOAA AccessAIS → congestion-series pipeline
-│   ├── public/               # static assets
-│   ├── package.json          # build/run manifest (+ lockfile)
-│   ├── tsconfig.json / next.config.ts / tailwind.config.ts / eslint.config.mjs
-│   ├── .env.example          # environment template (copy to src/.env)
-│   └── README.md             # annotated source map
-├── docs/                     # problem, solution, architecture, setup guide
-│   ├── problem-statement.md
-│   ├── solution-overview.md
-│   ├── architecture.md
-│   └── setup-guide.md
-├── demo/                     # demo evidence
-│   ├── screenshots/          # 10 app screenshots
-│   ├── demo-video-link.txt   # link to the demo video
-│   └── demo-video-script.md  # shot-by-shot recording script
-├── presentation/             # slide deck (slides.pdf + source)
-├── submission.yaml           # structured submission metadata
-├── README.md
+├── src/                          # All project code
+│   ├── backend/                  # FastAPI gateway + capability services (Python 3.11)
+│   │   ├── app/
+│   │   │   ├── main.py           # gateway
+│   │   │   ├── models.py         # SQLAlchemy data model
+│   │   │   ├── reference.py      # REAL POLB terminals + constants
+│   │   │   ├── seed.py           # reference seed + SimPy layer
+│   │   │   ├── routers/          # one router per capability
+│   │   │   └── services/         # simulation · forecasting · anomaly · hotspot ·
+│   │   │                         #   optimiser · routing · plan · llm · pipeline
+│   │   ├── pyproject.toml
+│   │   └── .env.example
+│   ├── frontend/                 # React + Vite dashboard (6 tabs)
+│   └── README.md                 # annotated src/ map
+├── docs/                         # problem · solution · architecture · setup guide
+├── demo/                         # screenshots + demo video link/script
+├── presentation/                 # slides.pdf + source
+├── submission.yaml
+├── IMPLEMENTATION_STATUS.md      # honest code-vs-spec status
 └── CONTRIBUTING.md
 ```
 
-> Per the template, **all project code lives inside `src/`** — the complete Next.js app (source, Prisma schema, scripts, configs and manifest) is under `src/`, which is therefore the app root. Run all build/run commands from `src/`. See [`src/README.md`](src/README.md) for the annotated map.
+> `legacy/` holds the earlier prototype (kept for reference, not part of the submission).
 
 ---
 
 ## ⚡ How to Run
 
-> **Copy these exact steps from your [`docs/setup-guide.md`](docs/setup-guide.md)**
+> **Copy these exact steps from [`docs/setup-guide.md`](docs/setup-guide.md).**
 
 ```bash
-# 1. Clone the repo
-#    The complete app lives in src/, so that is the app root.
+# 0. Clone
 git clone https://github.com/your-org/bob-ai-hackathon-elevatex.git
-cd bob-ai-hackathon-elevatex/src
+cd bob-ai-hackathon-elevatex
 
-# 2. Prerequisites: Bun >= 1.1 and a running local PostgreSQL server
-curl -fsSL https://bun.sh/install | bash
+# 1. Create the PostgreSQL database (once)
+createdb -U postgres portflow
 
-# 3. Create the PostgreSQL database (once)
-createdb -U postgres portflow_sbx
+# 2. Backend — FastAPI + engines
+cd src/backend
+uv sync --python 3.11              # uv installs Python 3.11 and all deps
+cp .env.example .env               # set DATABASE_URL (+ optional ANTHROPIC_API_KEY)
+uv run python -m app.seed          # REAL POLB data + SimPy synthetic operations layer
+uv run uvicorn app.main:app --reload --port 8000
 
-# 4. Install dependencies
-bun install
-
-# 5. Configure environment (Prisma reads src/.env)
-cp .env.example .env        # then set DATABASE_URL to your PostgreSQL connection string
-
-# 6. Create the PostgreSQL schema and seed real POLB capacities + labelled demo data
-bun run db:push
-bun run db:seed
-
-# 7. Run
-bun run dev        # → http://localhost:3000
+# 3. Frontend — React + Vite (second terminal)
+cd ../frontend
+npm install
+npm run dev                        # → http://localhost:5173
 ```
 
-**Verify (30 seconds):** open http://localhost:3000 — the Overview tab should show port-wide KPIs and 5 zone cards. Then click **Berth & Cranes → Run optimiser**, **72-Hr Plan → Regenerate plan**, and ask Bob *"what's the congestion outlook for the next 72 hours?"*.
+**Verify:** open http://localhost:5173 (Overview KPIs + hotspots + anomalies), click **Berth & Cranes → Run scenario**, then **72-Hr Plan**, and ask Bob *"what's the congestion outlook for the next 72 hours?"*.
 
 ---
 
@@ -138,50 +129,44 @@ bun run dev        # → http://localhost:3000
 
 | Artifact | Link |
 |---|---|
-| 📹 Demo Video | [See demo/demo-video-link.txt](demo/demo-video-link.txt) (recording script: [demo/demo-video-script.md](demo/demo-video-script.md)) |
+| 📹 Demo Video | [See demo/demo-video-link.txt](demo/demo-video-link.txt) (script: [demo/demo-video-script.md](demo/demo-video-script.md)) |
 | 🌐 Live Demo | [See demo/live-demo-url.txt](demo/live-demo-url.txt) |
-| 🖼️ Screenshots | [See demo/screenshots/](demo/screenshots/) (10 images) |
+| 🖼️ Screenshots | [See demo/screenshots/](demo/screenshots/) |
 | 📊 Presentation | [See presentation/slides.pdf](presentation/slides.pdf) |
 
 ---
 
 ## 🧪 Data honesty — what is real, what is demo
 
-**REAL (hard-coded, cited):** the Port of Long Beach terminal capacity table from POLB terminal fact sheets — LBCT Pier E 4,200 ft / 3 deepsea berths / 18 STS cranes, 3.5M+ TEU annual capacity; ITS Pier G 4,250 ft / 14 cranes; PCT Pier J 5,902 ft / 14 cranes; TTI Pier T 5,000 ft / 16 cranes; port-wide 80 berths across 10 piers and 71 post-Panamax gantry cranes. These are the optimiser's hard constraints (`GET /api/terminals`).
-
-**DEMO (labelled `source: "DEMO_AIS"` everywhere it appears):** the 38-vessel queue and the 14-day hourly congestion history shipped in the seed. The dataset is clearly labelled and **replaceable** — `src/scripts/ais/` contains a real, self-contained pipeline (`build-congestion.ts` → `import-series.ts`) that converts a genuine NOAA AccessAIS CSV into the same per-zone hourly series and loads it with `source: "AIS"`. See [`src/scripts/ais/README.md`](src/scripts/ais/README.md).
+- **REAL (cited):** the Port of Long Beach terminal capacity table — LBCT Pier E 4,200 ft / 3 berths / 18 STS cranes, 3.5M+ TEU; ITS Pier G 4,250 ft / 14; PCT Pier J 5,902 ft / 14; TTI Pier T 5,000 ft / 16 (POLB fact sheets). These are the optimiser's hard constraints (`GET /api/terminals`).
+- **SYNTHETIC (`DEMO_AIS`):** the vessel queue and 14-day hourly congestion series, produced by the SimPy simulation — the operational layer no public dataset exposes.
+- **REAL pipeline path:** the NOAA AccessAIS batch pipeline (in `legacy/scripts/ais`) converts a genuine AccessAIS CSV into the same `CongestionObservation` schema (`source="AIS"`).
 
 ---
 
 ## ⚠️ Known Limitations
 
-> We would rather be honest than overclaim.
-
-- **Demo AIS dataset** — the vessel queue and congestion history are a deterministic, labelled demo seed (`DEMO_AIS`), not real AIS; a real NOAA AccessAIS swap-in pipeline is provided in `src/scripts/ais/`.
-- **Anchorage dwell is interval-approximated** in the AIS pipeline (last minus first anchored sighting; a vessel counts toward every hour between them — no interpolation across AIS gaps).
-- **Anchorage rectangles are documented approximations**, not official chart polygons.
-- **13 berths modelled, not 80** — the optimiser constrains the four POLB container terminals (13 working berths / 62 cranes after the published split), not the full port-wide estate.
-- **Heuristic optimiser** — greedy selection + sequencing + pairwise berth-swap local search, not an exact MILP; it always reports the FIFO baseline and its own deltas.
-- **Deliberately oversubscribed crisis scenario (~3×)** — the optimiser maximises throughput and priority-weighted fairness rather than raw average wait; vessels beyond the horizon are deferred and shown honestly as divert candidates.
-- **In-memory caching only** (60 s context TTL, forecast cache keyed by model time) — single process, no external cache.
-- **Bob's LLM mode needs the backend SDK** — otherwise it answers in deterministic mode from the same engine output (clearly marked in the UI).
-- **Static vessel schedule** — ETAs are fixed at seed/run time; no live feed integration.
+- **`DEMO_AIS` operations layer** — vessel queue + history are SimPy-generated and labelled; no live AIS/TOS feed.
+- **13 berths modelled** (four POLB container terminals), not the port-wide 80-berth estate.
+- **Tidal windows** are modelled only as a berth draft bound, not a time-varying tide curve.
+- **Objective trade-off** — in the deliberately oversubscribed scenario CP-SAT prioritises wait/makespan (the spec objective); cargo volume is reported but not optimised.
+- **LLM is optional** — Claude phrases the plan; without a key Bob/plan use a deterministic template over the same numbers.
+- **Caching is in-memory**; vessel ETAs are fixed at seed time.
 
 ---
 
 ## 🏅 What We're Most Proud Of
 
-The **forecasting engine is a real trained model**, not a lookup table: a schedule-aware ridge regression rolled out recursively with ETS-style damping, validated on a 48-hour holdout plus 12 multi-origin rollouts (R² ≈ 0.90, MAE₇₂ ≈ 5 index points, **+83% skill vs persistence**), with per-horizon error diagnostics rendered in the UI. Equally, **Bob is load-bearing rather than cosmetic** — every answer is produced by actually running the forecast / optimiser / routing / plan engines and is auditable through the tool-call metadata, with a deterministic fallback built from the same engine output. Every number in the app is engine-computed and traceable back to a documented constant.
+The **entire stack matches the technical plan** — SimPy generates the operations layer, LightGBM forecasts with quantile bands, Isolation Forest detects disruptions, and **OR-Tools CP-SAT solves berth + crane assignment exactly** under hard constraints with an honest FIFO baseline. And **Bob is load-bearing**: every answer actually runs the engines and is auditable through the tool-call metadata, with a deterministic fallback built from the same engine output.
 
 ---
 
 ## 📚 Documentation index
 
-- [`docs/problem-statement.md`](docs/problem-statement.md) — the problem, the 2021 evidence, the exact scope
-- [`docs/solution-overview.md`](docs/solution-overview.md) — the 4 modules + Bob, algorithms, constants with sources
-- [`docs/architecture.md`](docs/architecture.md) — Mermaid flow, component table, data flow, API table, Bob flow
-- [`docs/setup-guide.md`](docs/setup-guide.md) — tested setup, env vars, reseeding, real-AIS swap, troubleshooting
-- [`src/README.md`](src/README.md) — annotated source map
-- [`docs/development.md`](docs/development.md) — developer workflow and PR checklist
-- [`src/scripts/ais/README.md`](src/scripts/ais/README.md) — real AIS → congestion-series pipeline
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — dev workflow and PR checklist
+- [`docs/problem-statement.md`](docs/problem-statement.md) — problem, 2021 evidence, scope
+- [`docs/solution-overview.md`](docs/solution-overview.md) — modules, algorithms, constants
+- [`docs/architecture.md`](docs/architecture.md) — layers, data flow, API, Bob flow
+- [`docs/setup-guide.md`](docs/setup-guide.md) — tested setup, env vars, troubleshooting
+- [`src/README.md`](src/README.md) — annotated monorepo map
+- [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) — honest code-vs-spec status
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — dev workflow

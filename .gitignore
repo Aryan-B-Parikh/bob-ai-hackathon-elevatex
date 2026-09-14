@@ -94,3 +94,9 @@ logs/
 .terraform/
 *.tfstate
 *.tfstate.backup
+
+# earlier prototype — kept locally, in git history
+legacy/
+
+# TS incremental build info
+*.tsbuildinfo

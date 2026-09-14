@@ -1,0 +1,134 @@
+"""Reference data + documented constants.
+
+Terminal capacities are REAL Port of Long Beach fact-sheet figures (cited in
+docs/setup-guide.md). Yard/gate figures and all cost/productivity constants are
+documented demo assumptions.
+"""
+
+from __future__ import annotations
+
+# ---------------------------------------------------------------- REAL terminals
+# Source: Port of Long Beach terminal fact sheets (polb.com).
+TERMINALS: list[dict] = [
+    {
+        "code": "LBCT",
+        "name": "Long Beach Container Terminal",
+        "pier": "Pier E",
+        "lat": 33.750,
+        "lon": -118.217,
+        "berth_length_ft": 4200,
+        "deepsea_berths": 3,
+        "gantry_cranes": 18,
+        "capacity_teu_m": 3.5,
+        "zone_code": "Z-LBCT",
+        "note": "3.5M+ TEU annual capacity; 18 STS dual-hoist/tandem cranes (POLB fact sheet)",
+        "depth_ft": 50.0,
+        "yards": [
+            {"code": "E-N", "ground_slots_teu": 18000, "reefer_plugs": 900},
+            {"code": "E-S", "ground_slots_teu": 16500, "reefer_plugs": 750},
+            {"code": "E-REEF", "ground_slots_teu": 4200, "reefer_plugs": 1400},
+            {"code": "E-EMP", "ground_slots_teu": 6000, "reefer_plugs": 0},
+        ],
+        "gate": {"lanes": 14, "trucks_per_hour": 130.0, "open_hours": "06:00-18:00"},
+    },
+    {
+        "code": "ITS",
+        "name": "International Transportation Service",
+        "pier": "Pier G",
+        "lat": 33.746,
+        "lon": -118.203,
+        "berth_length_ft": 4250,
+        "deepsea_berths": 3,
+        "gantry_cranes": 14,
+        "capacity_teu_m": None,
+        "zone_code": "Z-ITS",
+        "note": "4,250 ft continuous berth (POLB fact sheet)",
+        "depth_ft": 50.0,
+        "yards": [
+            {"code": "G-1", "ground_slots_teu": 14000, "reefer_plugs": 600},
+            {"code": "G-2", "ground_slots_teu": 13000, "reefer_plugs": 500},
+            {"code": "G-3", "ground_slots_teu": 11000, "reefer_plugs": 300},
+            {"code": "G-REEF", "ground_slots_teu": 3600, "reefer_plugs": 900},
+        ],
+        "gate": {"lanes": 12, "trucks_per_hour": 110.0, "open_hours": "06:00-18:00"},
+    },
+    {
+        "code": "PCT",
+        "name": "Pier J Port Container Terminal",
+        "pier": "Pier J",
+        "lat": 33.741,
+        "lon": -118.181,
+        "berth_length_ft": 5902,
+        "deepsea_berths": 4,
+        "gantry_cranes": 14,
+        "capacity_teu_m": None,
+        "zone_code": "Z-PCT",
+        "note": "5,902 ft berth, longest in the harbour (POLB fact sheet)",
+        "depth_ft": 52.0,
+        "yards": [
+            {"code": "J-1", "ground_slots_teu": 16000, "reefer_plugs": 500},
+            {"code": "J-2", "ground_slots_teu": 15000, "reefer_plugs": 450},
+            {"code": "J-3", "ground_slots_teu": 13500, "reefer_plugs": 350},
+            {"code": "J-4", "ground_slots_teu": 12000, "reefer_plugs": 250},
+        ],
+        "gate": {"lanes": 16, "trucks_per_hour": 150.0, "open_hours": "06:00-18:00"},
+    },
+    {
+        "code": "TTI",
+        "name": "Total Terminals International",
+        "pier": "Pier T",
+        "lat": 33.736,
+        "lon": -118.210,
+        "berth_length_ft": 5000,
+        "deepsea_berths": 3,
+        "gantry_cranes": 16,
+        "capacity_teu_m": None,
+        "zone_code": "Z-TTI",
+        "note": "5,000 ft berth (POLB fact sheet)",
+        "depth_ft": 50.0,
+        "yards": [
+            {"code": "T-1", "ground_slots_teu": 17000, "reefer_plugs": 400},
+            {"code": "T-2", "ground_slots_teu": 15000, "reefer_plugs": 350},
+            {"code": "T-3", "ground_slots_teu": 12000, "reefer_plugs": 300},
+            {"code": "T-4", "ground_slots_teu": 9000, "reefer_plugs": 150},
+        ],
+        "gate": {"lanes": 14, "trucks_per_hour": 120.0, "open_hours": "06:00-18:00"},
+    },
+]
+
+TERMINAL_ZONES = ["Z-LBCT", "Z-ITS", "Z-PCT", "Z-TTI"]
+ALL_ZONES = ["Z-PORT", *TERMINAL_ZONES]
+ZONE_LABELS = {
+    "Z-PORT": "San Pedro Bay (port-wide)",
+    "Z-LBCT": "LBCT · Pier E",
+    "Z-ITS": "ITS · Pier G",
+    "Z-PCT": "PCT · Pier J",
+    "Z-TTI": "TTI · Pier T",
+}
+
+# ---------------------------------------------------------------- documented constants
+CONGESTION_QUEUE_CAP = 20          # queue that maps to 60% of the index
+CONGESTION_WAIT_CAP = 72           # wait (h) that maps to 40% of the index
+DAILY_OP_COST_USD = 32_000         # mid-range public estimate for a mid/large container ship
+REEFER_CONTENT_VALUE_USD = 180     # expected spoilage-risk per reefer unit per event
+DEFAULT_MOVE_RATE_PER_CRANE_HOUR = 28  # mid-point of the 25-35 moves/h STS range
+SERVICE_BUFFER_HOURS = 2               # mooring/unmooring + paperwork
+MAX_CRANES_PER_VESSEL = 8
+BERTH_TURNAROUND_HOURS = 36            # occupancy + buffer; per-zone outflow ~ berths/36 per hour
+MISMATCH_RESERVE_FT = 700              # reserve long berths for ULCVs
+
+# Alternate ports for diversion (great-circle distance / 15 kn transit; availability buffer documented)
+ALT_PORTS = [
+    {"name": "Port of Oakland", "distance_nm": 500, "transit_hours": 33, "availability": "medium", "max_loa_ft": 1320},
+    {"name": "Seattle-Tacoma (NW Seaport)", "distance_nm": 1180, "transit_hours": 79, "availability": "low", "max_loa_ft": 1320},
+    {"name": "Prince Rupert (Fairview)", "distance_nm": 1260, "transit_hours": 84, "availability": "low", "max_loa_ft": 1300},
+    {"name": "Ensenada (ECT)", "distance_nm": 150, "transit_hours": 10, "availability": "high", "max_loa_ft": 1000},
+]
+AVAILABILITY_BUFFER_HOURS = {"high": 6, "medium": 18, "low": 36}
+
+# Composite congestion risk-score weights (doc §17): queue, utilisation, throughput variance,
+# forecast uncertainty, disruption signal.
+RISK_WEIGHTS = {"queue": 0.34, "utilisation": 0.24, "variance": 0.16, "uncertainty": 0.16, "disruption": 0.10}
+
+# Optimiser objective weights (exposed to the supervisor per J req.)
+OBJECTIVE_WEIGHTS = {"wait": 1.0, "makespan": 0.05, "crane_imbalance": 0.15, "priority_bonus": 0.10}

@@ -1,0 +1,143 @@
+# Implementation Status — PortFlow SBX vs. the 3 Specification Documents
+
+**Method:** static inspection of the actual code under `src/` **plus** live execution — the FastAPI
+service was run, seeded into PostgreSQL, and every endpoint exercised (forecast, CP-SAT solve, routing,
+plan, anomalies, Bob, CSV export), and the React/Vite dashboard was built and served. Status reflects
+what is **running**, not what the docs claim.
+
+**Legend:** ✅ Done · 🟡 Partial · ❌ Missing
+
+---
+
+## 0. Bottom line
+
+The **technology stack is now aligned to the plan** (`3_Technical_Architecture_and_Build_Plan.md` §1).
+The remaining gaps are feature-depth items (a few modules) rather than stack divergence.
+
+| | Count |
+|---|---|
+| ✅ Done | 20 |
+| 🟡 Partial | 17 |
+| ❌ Missing | 5 |
+
+---
+
+## 1. Stack alignment (plan §1) — ✅ now aligned
+
+| Plan layer | Plan choice | Implemented | Status |
+|---|---|---|---|
+| Frontend / Dashboard | React + Vite, Recharts/D3, Tailwind | React 18 + Vite 6 + Tailwind v4 + Recharts (`src/frontend/`) | ✅ |
+| Backend API | FastAPI, service-per-capability behind a gateway | FastAPI gateway + one router per capability (`src/backend/app/main.py`, `routers/`) | ✅ |
+| Forecasting | LightGBM/XGBoost; scikit-learn Isolation Forest | **LightGBM** + quantile bands; **sklearn IsolationForest** (`services/forecasting.py`, `anomaly.py`) | ✅ |
+| Optimisation (BAP/QCAP) | Google OR-Tools **CP-SAT** | **OR-Tools CP-SAT** (`services/optimiser.py`) — verified `OPTIMAL`/`FEASIBLE`, ~0.3–8 s | ✅ |
+| Simulation | **SimPy** discrete-event | **SimPy** berth resources (`services/simulation.py`) | ✅ |
+| Database | PostgreSQL + TimescaleDB *or plain tables* | **PostgreSQL** via SQLAlchemy 2 + psycopg3 (plain tables — plan-allowed) | ✅ |
+| LLM layer | Claude, phrasing only | **Anthropic Claude** in `services/llm.py`, strictly grounded, deterministic fallback | ✅ |
+| Data pipeline | Python batch loads (AIS, BTS, weather) | SimPy layer built; AIS/weather batch noted below | 🟡 |
+
+**Verified running:** `build_full` (forecast→anomaly→hotspot→optimiser→routing→plan) executes end-to-end;
+`/api/*` return live engine data; Vite proxies `/api` and renders the dashboard.
+
+---
+
+## 2. Module-by-module status (doc 1 §2–§16)
+
+| Module | Requirement (summary) | Evidence in code | Status | Remaining |
+|---|---|---|---|---|
+| **A** Port & Terminal Profiling | berths, crane inventory, yard, gate, versioned config | `models.py` `Terminal`(+`config_version`) / `Berth` / `Crane`(type, reach, rated moves/h, status) / `YardZone` / `Gate`; `reference.py` REAL POLB | ✅ | labour shifts, rail sidings |
+| **B** Vessel Schedule Ingestion | IMO, ETD, service, declared-vs-AIS ETA, **revision history** | `VesselCall` (imo, etd_hours, service_string, declared_eta_hours, ais_eta_hours, unresolved, data_confidence) + `EtaRevision` | 🟡 | CSV/EDI upload UI; auto-replan on revision |
+| **C** Berth/Crane/Yard/Gate Capacity | live occupancy, crane availability, yard util, gate queue, maintenance-vs-failure | SimPy produces occupancy/yard/gate state; `Crane.status` + `status_reason` (planned maintenance) | ✅ (synthetic) | live TOS feed |
+| **D** Data Normalisation & Quality | unit normalisation, original+normalised, per-record confidence, completeness score | `CongestionObservation.is_measured/confidence/raw`, `VesselCall.raw/unresolved` | 🟡 | unit-conversion engine; per-terminal completeness score |
+| **E** AIS / Historical KB | tracks, dwell baselines, vintages, cleaning | `CongestionObservation` (source DEMO_AIS/AIS); SimPy history; legacy AIS pipeline | 🟡 | vessel tracks, berth-dwell baselines, data vintages |
+| **F** Congestion Forecasting | 24/48/72h queue/wait/**yard util**, ML, uncertainty band, reproducible | `forecasting.py` LightGBM, 4 targets, quantile 0.1/0.9 bands, multi-origin validation, **model_version** | ✅ | exogenous weather signal (pipeline pending) |
+| **G** Hotspot / Bottleneck | binding resource + composite risk score + ranking | `hotspot.py`: w1..w5 risk score, `binding_constraint` (BERTH/CRANE/YARD/GATE), confidence degradation | ✅ | — |
+| **H** Anomaly / Disruption | bunching/outage/weather, robust method, disruption-vs-data-error, min sample | `anomaly.py`: IsolationForest, KIND classifier, `DATA_ERROR` distinction, `MIN_SAMPLES` guard | ✅ | weather-driven detection (needs weather pipeline) |
+| **I** Alternate Routing | windows/terminals/ports, trade-off, sustained congestion, feasibility | `routing.py`: DIVERT/SLOW_STEAM/PRIORITY_WINDOW/HOLD, alt-port table, **sustained** check, LOA feasibility | 🟡 | alternate in-port terminals / berthing windows |
+| **J** Berth/Crane Optimiser | BAP/QCAP exact, hard constraints, soft objectives, exposed weights | `optimiser.py`: **CP-SAT**, hard LOA/depth/reach + `AddNoOverlap` + `AddCumulative`, FIFO baseline, exposed weights | ✅ | time-varying tidal windows; incremental warm-start |
+| **K** 72h Plan | shift plan from F–J, LLM phrases only, cite runs, confidence | `plan.py` 12×6h shifts + run ids + model version; `llm.py` Claude narrative | ✅ | per-horizon confidence labelling in plan |
+| **L** Scenario Simulator | berth add/remove, outage, bunching, baseline compare, clone/rollback | `/api/optimise` + `/api/scenarios` (crane outage/productivity), persisted `Scenario`+`ImpactAssessment` | 🟡 | berth add/remove, bunching event, clone/rollback UI |
+| **M** Explainability | evidence per decision, confidence, assumptions | risk `explanation`, routing `rationale`, model card, feature importance, objective weights exposed | 🟡 | surface the *binding constraint* per assignment in the UI |
+| **N** Dashboard | KPI, heatmap, Gantt, timeline, before/after, drill-down | React dashboard: KPI cards, zone cards+sparklines, LightGBM chart, **72h Gantt**, routing cards, 12 shift cards, Bob chat, terminals table | 🟡 | true heatmap matrix; port→terminal→berth→vessel drill-down; dedicated scenario-compare view |
+
+---
+
+## 3. Data sources (doc 2)
+
+| Source | Spec use | Status |
+|---|---|---|
+| NOAA/BOEM **AccessAIS** | historical AIS ground truth | 🟡 pipeline exists in `legacy/scripts/ais` (TS); ships `DEMO_AIS` by default |
+| **SimPy** synthetic ops layer | synthetic berth/crane/yard/gate state | ✅ implemented (the plan's core synthetic strategy) |
+| **BTS PPFSP** | benchmark/validate | ❌ not integrated |
+| **Open-Meteo** weather | forecast signal + disruption | ❌ config present, batch pipeline not built |
+| World Port Index / Kaggle ports | static port reference | ✅ replaced by REAL POLB fact sheet (better) |
+
+---
+
+## 4. Acceptance checklists
+
+### 4a. Doc 1 §29
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Terminal/berth/crane/yard data entered & validated | 🟡 (modelled + seeded; no edit UI) |
+| 2 | Vessel schedule ingest with ETA revision history | 🟡 (revision history ✅; no CSV upload) |
+| 3 | Units/timestamps normalised consistently | 🟡 (UTC throughout; no conversion engine) |
+| 4 | Historical baselines stored & versioned | 🟡 (stored; not versioned) |
+| 5 | Forecasts reproducible + confidence band | ✅ (model_version + quantile bands) |
+| 6 | Hotspots ranked, attributed, explainable | ✅ (binding resource + risk score) |
+| 7 | Plan never violates a hard constraint | ✅ (CP-SAT hard constraints) |
+| 8 | 72h plan with assumptions/confidence | 🟡 |
+| 9 | ≥1 what-if scenario vs baseline | ✅ (`/api/scenarios`) |
+| 10 | Heatmap + Gantt | 🟡 (Gantt ✅; schematic zone view, no true heatmap) |
+| 11 | Edge cases don't mislead | 🟡 (data-error vs disruption ✅; others partial) |
+| 12 | Model version + timestamp per run | ✅ |
+
+### 4b. Doc 3 §9
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Pipeline loads real AIS + BTS + weather, synthetic ops, no manual steps | 🟡 (SimPy ✅; BTS/weather ❌) |
+| 2 | Forecast point + uncertainty for queue/wait/**utilisation** | ✅ (4 targets) |
+| 3 | Optimisation never violates a hard constraint | ✅ |
+| 4 | Heatmap + Gantt from live service output | 🟡 |
+| 5 | ≥1 scenario compared to baseline | ✅ |
+| 6 | Plan text from validated numbers, LLM phrasing only | ✅ |
+| 7 | Demo rehearsed with weather fallback | ❌ (no weather) |
+
+---
+
+## 5. What is DONE (verified running)
+
+- SimPy DES → vessel calls, ETA revisions, 14-day hourly congestion series, yard/gate state.
+- LightGBM forecast (4 targets) with quantile bands, model version, per-horizon validation, feature importance.
+- Isolation Forest anomaly detector (bunching/outage/yard/data-error).
+- Composite hotspot risk score with binding-resource attribution.
+- OR-Tools CP-SAT BAP/QCAP with hard constraints + FIFO baseline + measured deltas (CP-SAT ran `OPTIMAL`/`FEASIBLE`; e.g. −19 % total wait, −55 h makespan vs FIFO on the seeded instance).
+- Routing recommender (4 options, sustained check, cost model), 72h plan, Claude narrative + deterministic fallback.
+- FastAPI gateway (12 routes), PostgreSQL persistence of every run, CSV export, caching (22 s → 1.7 s).
+- React/Vite dashboard (6 tabs, Recharts, Gantt, scenario sliders, Bob chat) — builds clean and proxies the API.
+
+## 6. What is REMAINING (prioritised)
+
+**P0**
+1. **Module D** — unit-normalisation + per-terminal data-completeness score.
+2. **Module N** — true congestion heatmap + port→terminal→berth→vessel drill-down + scenario-compare view.
+3. **Module B** — CSV/EDI schedule upload and re-plan on ETA revision.
+
+**P1**
+4. **Weather pipeline** (Open-Meteo) into forecasting + anomaly detection; **BTS PPFSP** benchmark.
+5. **Module I** — alternate in-port terminal/window options.
+6. **Module L** — berth add/remove + bunching scenarios, clone/rollback in the UI.
+7. **Module J** — time-varying tidal windows; incremental warm-start re-optimise.
+
+**P2**
+8. Live AIS streaming, TimescaleDB, multi-port routing, continuously-learning models, split services into separate processes.
+
+---
+
+## 7. Honesty notes
+
+- The optimiser is now a **real exact solver (CP-SAT)** — not a heuristic. It enforces berth length/depth, crane reach, no berth overlap and the terminal crane-pool capacity.
+- The vessel queue and 14-day history are **SimPy-simulated and labelled `DEMO_AIS`** — not real AIS. A real AccessAIS path exists in `legacy/`.
+- **Claude is optional and used only to phrase** validated numbers; without a key Bob/plan use a deterministic template over the same engine output.
+- The scenario is deliberately oversubscribed, so CP-SAT trades some average wait against makespan; **cargo volume is not in the spec objective** (reported for transparency).

@@ -1,59 +1,84 @@
-# src/ — PortFlow SBX app root & source map
+# src/ — PortFlow SBX monorepo
 
-Per the hackathon template, **all project code lives inside `src/`** — which makes
-this folder the Next.js app root. Everything needed to build, seed and run the app
-is here; run all commands from this folder.
-
-One Next.js 16 (App Router, TypeScript) application: dashboard UI + API route
-handlers + the four prediction/optimisation engines + Bob.
+Aligned to the technical plan (`3_Technical_Architecture_and_Build_Plan.md` §1). Three parts:
 
 ```
-src/                              # ← app root (run commands from here)
-├── app/                          # App Router
-│   ├── page.tsx                  # dashboard shell — 6 tabs: Overview, Forecast,
-│   │                             #   Berth & Cranes, Routing, 72-Hr Plan, Bob AI
-│   ├── layout.tsx                # root layout, fonts, theme
-│   ├── providers.tsx             # TanStack Query + next-themes + Sonner providers
-│   ├── globals.css               # Tailwind 4 theme tokens
-│   └── api/                      # route handlers (all dynamic)
-│       ├── overview/route.ts     # GET — live KPIs, zone status, alerts, arrivals
-│       ├── forecast/route.ts     # GET ?zone= — 72h forecast + hotspot rank + model card
-│       ├── optimise/route.ts     # GET latest run / POST run + persist
-│       ├── routing/route.ts      # GET — divert / slow-steam / priority-window recs
-│       ├── plan/route.ts         # GET ?text=1 / POST — 72h ops plan (JSON + text)
-│       ├── vessels/route.ts      # GET — queue enriched with assignment status
-│       ├── export/route.ts       # GET ?type= — CSV exports
-│       ├── terminals/route.ts    # GET — REAL POLB capacity table (cited)
-│       └── bob/route.ts          # GET history / POST message → engine packs → LLM
-├── components/
-│   ├── dashboard/                # feature tabs + shared widgets (badges, cards)
-│   └── ui/                       # shadcn/ui primitives (button, card, tabs, …)
-├── hooks/                        # use-toast, use-mobile
-├── lib/
-│   ├── engine/                   # ← the prediction/optimisation core
-│   │   ├── types.ts              #    shared engine contracts (zones, vessels, outputs)
-│   │   ├── context.ts            #    DB → EngineContext (shared t0, 60 s cache)
-│   │   ├── forecast.ts           #    ① ridge-regression congestion forecast + hotspot rank
-│   │   ├── optimiser.ts          #    ③ FIFO baseline vs 3-phase berth/crane optimiser
-│   │   ├── routing.ts            #    ② alternate-routing rule engine ($32k/day cost model)
-│   │   ├── plan.ts               #    ④ 72 h plan — 12 × 6 h shifts + checklist + text
-│   │   ├── pipeline.ts           #    orchestration: forecast → optimiser → routing → plan
-│   │   ├── snapshot.ts           #    fresh-run reuse for read-only views
-│   │   └── bob.ts                #    ⑤ Bob: intent → engines → grounded LLM + fallback
-│   ├── api.ts                    # typed fetch client for /api/*
-│   ├── db.ts                     # Prisma client singleton
-│   └── utils.ts                  # cn(), uuid()
-├── prisma/
-│   ├── schema.prisma             # data model (PostgreSQL via Prisma)
-│   └── seed.ts                   # REAL POLB capacities + labelled demo vessels/history
-├── scripts/
-│   ├── ais/                      # real NOAA AccessAIS → congestion-series pipeline
-│   └── debug-optimiser.ts
-├── public/                       # static assets
-├── .env.example                  # copy to .env (both live in src/)
-├── package.json / bun.lock       # dependency manifest + lockfile
-├── tsconfig.json / next.config.ts / tailwind.config.ts / eslint.config.mjs
-└── components.json               # shadcn/ui config
+src/
+├── backend/                     # FastAPI gateway + capability services (Python 3.11)
+│   ├── app/
+│   │   ├── main.py              # FastAPI gateway (mounts every capability router)
+│   │   ├── config.py            # pydantic-settings (.env)
+│   │   ├── db.py                # SQLAlchemy 2.0 engine / session / Base
+│   │   ├── models.py            # full data model (spec §18 entity flow)
+│   │   ├── reference.py         # REAL Port of Long Beach terminals + documented constants
+│   │   ├── seed.py              # DB seed: real reference data + SimPy synthetic layer
+│   │   ├── serialize.py         # dataclass → JSON helpers
+│   │   ├── routers/             # one router per capability (overview, forecast, optimise,
+│   │   │                        #   routing, plan, catalog, bob) behind the gateway
+│   │   └── services/
+│   │       ├── simulation.py    # SimPy discrete-event operations layer
+│   │       ├── forecasting.py   # LightGBM + quantile-regression uncertainty bands
+│   │       ├── anomaly.py       # scikit-learn Isolation Forest disruption detector
+│   │       ├── hotspot.py       # resource-binding attribution + composite risk score
+│   │       ├── optimiser.py     # Google OR-Tools CP-SAT (BAP/QCAP) + FIFO baseline
+│   │       ├── routing.py       # DIVERT / SLOW_STEAM / PRIORITY_WINDOW / HOLD rule engine
+│   │       ├── plan.py          # 12 × 6h operations plan (JSON + printable text)
+│   │       ├── llm.py           # Claude (Anthropic) narrative — phrasing only
+│   │       ├── context.py       # DB → shared engine context (one model time t0)
+│   │       └── pipeline.py      # orchestration + persistence
+│   ├── pyproject.toml           # Python deps (uv)
+│   ├── .env.example
+│   └── README.md
+│
+├── frontend/                    # React + Vite dashboard
+│   ├── src/
+│   │   ├── App.tsx              # 6 tabs: Overview · Forecast · Berth & Cranes ·
+│   │   │                        #   Routing · 72-Hr Plan · Bob AI
+│   │   ├── api.ts               # typed fetch client (proxied to FastAPI)
+│   │   ├── main.tsx / index.css
+│   ├── index.html
+│   ├── vite.config.ts           # React + Tailwind v4 + /api proxy → :8000
+│   └── package.json
+│
+└── README.md (this file)
 ```
 
-Numbered modules ①–⑤ correspond to the four challenge items plus Bob — the mapping back to the hackathon template (`src/forecasting/` → `src/lib/engine/forecast.ts`, …) is tabled in the root `README.md` and `docs/architecture.md`. Environment template: `.env.example` (`DATABASE_URL` → the local PostgreSQL `portflow_sbx` database). Data lives in PostgreSQL via `prisma/schema.prisma`.
+**Data & simulation layers** live inside the backend (`app/services/simulation.py` for SimPy,
+`app/reference.py` for the real POLB reference data). The AIS batch pipeline is a separate
+script layer described in `docs/setup-guide.md`.
+
+## Technology map (plan §1)
+
+| Layer | Technology | Where |
+|---|---|---|
+| Gateway / API | FastAPI (Python 3.11) | `backend/app/main.py`, `backend/app/routers/` |
+| Simulation (synthetic ops) | SimPy discrete-event | `backend/app/services/simulation.py` |
+| Forecasting | LightGBM + quantile bands | `backend/app/services/forecasting.py` |
+| Anomaly detection | scikit-learn Isolation Forest | `backend/app/services/anomaly.py` |
+| Hotspot / risk score | deterministic scorer | `backend/app/services/hotspot.py` |
+| Optimisation (BAP/QCAP) | Google OR-Tools **CP-SAT** | `backend/app/services/optimiser.py` |
+| Routing | rule + cost model | `backend/app/services/routing.py` |
+| 72h plan | assembler + **Claude** narrative | `backend/app/services/plan.py`, `llm.py` |
+| Persistence | PostgreSQL (SQLAlchemy 2 + psycopg3) | `backend/app/models.py`, `db.py` |
+| Dashboard | React + Vite + Tailwind + Recharts | `frontend/` |
+
+## Run (short version)
+
+Full tested steps: [`../docs/setup-guide.md`](../docs/setup-guide.md).
+
+```bash
+# database (once)
+createdb -U postgres portflow
+
+# backend
+cd backend
+uv sync --python 3.11
+cp .env.example .env              # set DATABASE_URL (+ optional ANTHROPIC_API_KEY)
+uv run python -m app.seed         # real POLB data + SimPy synthetic operations layer
+uv run uvicorn app.main:app --reload --port 8000
+
+# frontend (second terminal)
+cd ../frontend
+npm install
+npm run dev                       # http://localhost:5173  (proxies /api → :8000)
+```

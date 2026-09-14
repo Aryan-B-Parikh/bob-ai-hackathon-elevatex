@@ -1,116 +1,127 @@
 # Setup Guide — PortFlow SBX
 
-Tested end-to-end with Bun + Next.js 16 + Prisma/PostgreSQL. Everything below runs on a stock machine with a local PostgreSQL server (all runtime data is local afterwards).
+Tested end-to-end with **Python 3.11 (uv) + FastAPI + PostgreSQL + React/Vite**. The stack matches
+`3_Technical_Architecture_and_Build_Plan.md` §1.
 
 ## 1. Prerequisites
 
-- **Bun** ≥ 1.1 (`curl -fsSL https://bun.sh/install | bash`)
-- **PostgreSQL** running locally (tested on PostgreSQL 18, default port `5432`), with a superuser/login you know. This guide assumes the default superuser `postgres` on `localhost`.
+- **uv** (Python toolchain) — `curl -LsSf https://astral.sh/uv/install.sh | sh` (Windows: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`). uv fetches Python **3.11** automatically.
+- **PostgreSQL** running locally (tested on PostgreSQL 18, port `5432`). TimescaleDB is *not* required — the plan allows plain tables.
+- **Node.js ≥ 20** + npm (for the Vite frontend).
 
 ## 2. Step-by-step
 
 ```bash
-# 0. get the repo and enter the app root (the Next.js app lives in src/)
-git clone <your-repo-url> && cd <repo>/src
+# 0. get the repo
+git clone <your-repo-url> && cd <repo>
 
-# 1. create the database (once)
-createdb -U postgres portflow_sbx          # or: psql -U postgres -c "CREATE DATABASE portflow_sbx;"
+# 1. create the PostgreSQL database (once)
+createdb -U postgres portflow        # or: psql -U postgres -c "CREATE DATABASE portflow;"
 
-# 2. install dependencies
-bun install
+# 2. BACKEND
+cd src/backend
+uv sync --python 3.11                # creates .venv and installs FastAPI, LightGBM, OR-Tools, SimPy, sklearn, anthropic…
+cp .env.example .env                 # then edit DATABASE_URL with your PostgreSQL user + password
+uv run python -m app.seed            # REAL POLB terminals + SimPy synthetic operations layer
 
-# 3. environment — create src/.env from the template (it is gitignored):
-cp .env.example .env
-#    then edit DATABASE_URL in src/.env with your PostgreSQL user + password
-#    (format: postgresql://USER:PASSWORD@HOST:PORT/portflow_sbx?schema=public)
+uv run uvicorn app.main:app --reload --port 8000
+#   → API docs: http://localhost:8000/docs   (health: http://localhost:8000/health)
 
-# 4. create the PostgreSQL schema
-bun run db:push
-
-# 5. seed: real POLB terminal capacities + labelled demo vessels/history
-bun run db:seed
-
-# 6. run
-bun run dev        # → http://localhost:3000
+# 3. FRONTEND (second terminal)
+cd ../frontend
+npm install
+npm run dev                          # → http://localhost:5173  (proxies /api → :8000)
 ```
 
-**Verify (30 seconds):** open http://localhost:3000 — the Overview tab should show port-wide KPIs and 5 zone cards. Then: `curl http://localhost:3000/api/overview | head -c 400`, click **Berth & Cranes → Run optimiser**, **72-Hr Plan → Regenerate plan**, and ask Bob *"what's the congestion outlook for the next 72 hours?"*.
+**Verify (30 s):** open http://localhost:5173 — the **Overview** tab shows KPIs, zone cards, hotspot
+risk and anomaly flags. Then: `curl http://localhost:8000/api/overview | head -c 300`, click
+**Berth & Cranes → Run scenario**, **72-Hr Plan**, and ask Bob *"what's the congestion outlook for the
+next 72 hours?"*.
 
-## 3. Environment variables
+## 3. Environment variables (`src/backend/.env`)
 
 | Var | Value | Notes |
 |---|---|---|
-| `DATABASE_URL` | `postgresql://postgres:YOUR_PASSWORD@localhost:5432/portflow_sbx?schema=public` | PostgreSQL connection string. Format: `postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public` — replace `YOUR_PASSWORD` with your login. The database (`portflow_sbx`) must exist before `bun run db:push`. Template: `src/.env.example`. |
+| `DATABASE_URL` | `postgresql+psycopg://postgres:YOUR_PASSWORD@localhost:5432/portflow` | SQLAlchemy + psycopg3 URL. Database must exist first. |
+| `ANTHROPIC_API_KEY` | *(optional)* | Enables the Claude narrative layer. If unset, the plan/Bob fall back to a deterministic template built from the same engine numbers. |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-5` | Claude model id. |
+| `CORS_ORIGINS` | `http://localhost:5173` | Dashboard origin(s). |
+| `REFERENCE_LAT` / `REFERENCE_LON` | `33.74` / `-118.20` | San Pedro Bay reference point for the weather pipeline. |
+| `SIM_SEED` / `SIM_HORIZON_HOURS` | `20240817` / `72` | SimPy determinism + horizon. |
 
-No API keys are required to run the app. Bob's LLM mode uses the `z-ai-web-dev-sdk` server-side; without SDK access Bob still answers in deterministic mode (see troubleshooting).
+No key is required to run the app.
 
 ## 4. Reseeding / resetting
 
 ```bash
-bun run db:seed      # wipes + reseeds vessels/history/terminals (deterministic seed 20240817)
-bun run db:push      # re-applies the schema after schema edits (--accept-data-loss is in the script)
-bunx prisma db push --force-reset && bun run db:seed   # full reset (drop + recreate tables, then reseed)
+cd src/backend
+uv run python -m app.seed            # wipes + reseeds terminals/berths/cranes/yard/gate + SimPy vessels & history
+# full reset (drop + recreate all tables, then reseed):
+uv run python -c "from app.db import drop_all, init_db; drop_all(); init_db()" && uv run python -m app.seed
 ```
 
-The seed is deterministic (mulberry32 PRNG, seed `20240817`): every fresh seed produces the same 4 terminals / 13 berths / 62 cranes, 38 vessels (28 at anchor or drifting, 10 inbound) and 336 h × 5 zones of history including a wind-delay incident 144 h ago and a PCT crane outage 72–36 h ago.
+The SimPy layer is deterministic (seed `20240817`): every seed produces the same terminals/berths/cranes,
+vessel calls, ETA revisions and 14-day hourly congestion series.
 
-## 5. Swapping in REAL AIS data (NOAA AccessAIS)
+## 5. Real vs. synthetic data
 
-The shipped history/vessels are labelled `DEMO_AIS`. To train the forecast on real AIS-derived congestion:
-
-1. **Download a real export.** Use the AccessAIS "clip and ship" tool — **NOAA Office for Coastal Management, AccessAIS, https://marinecadastre.gov/accessais/** — draw a bounding box around San Pedro Bay (the approach + anchorage area of the Ports of LA/Long Beach), pick a 1–2 month window, and download the zipped CSV (a few hundred MB zipped is typical; keep the export under the ~2 GB order limit). Unzip it; the CSV has columns `MMSI, BaseDateTime, LAT, LON, SOG, COG, Heading, Status, …, VesselName, …`.
-2. **Build the congestion series:**
-
-   ```bash
-   bun scripts/ais/build-congestion.ts path/to/ais-export.csv congestion-series.csv --help
-   # (drop --help once you've seen the options)
-   bun scripts/ais/build-congestion.ts path/to/ais-export.csv congestion-series.csv
-   ```
-
-   The script filters to the San Pedro Bay bounding box, classifies at-anchor positions (SOG < 1 kn) inside documented anchorage rectangles, computes per-vessel anchorage dwell, assigns each vessel to the nearest terminal zone, and aggregates hourly `queueCount` / `avgWaitHrs` / `index` (the index formula is identical to the engine's). Details and the rectangle definitions: `src/scripts/ais/README.md`.
-3. **Inspect the output:** `head congestion-series.csv` → header `zoneCode,ts,queueCount,avgWaitHrs,index`, rows for `Z-LBCT, Z-ITS, Z-PCT, Z-TTI, Z-PORT`.
-4. **Load it into the database:**
-
-   ```bash
-   bun scripts/ais/import-series.ts congestion-series.csv
-   ```
-
-   This writes the rows into `CongestionReading` with `source="AIS"` and `hoursAgo` computed from the timestamps (0 = most recent). It **replaces the congestion history** so the series stays coherent — say so to anyone using the DB.
-5. **Restart / reload.** Hit `/api/overview` again (or restart `bun run dev`): the forecast now trains on the AIS-derived series, and the Overview `dataset.note` reflects the AIS source. The vessel queue itself remains the labelled demo set — deriving a real queue (MMSI-level) is the same pipeline's next step and is documented as a limitation.
-
-**Data source citations (required):** AIS/congestion series — NOAA Office for Coastal Management, AccessAIS (Marine Cadastre), https://marinecadastre.gov/accessais/. Terminal berth/crane capacities — Port of Long Beach terminal fact sheets (polb.com): LBCT Pier E 4,200 ft / 3 deepsea berths / 18 STS cranes, 3.5M+ TEU annual capacity; ITS Pier G 4,250 ft / 14; PCT Pier J 5,902 ft / 14; TTI Pier T 5,000 ft / 16; port-wide 80 berths, 10 piers, 71 post-Panamax gantry cranes.
+- **REAL, cited:** the Port of Long Beach terminal capacity table (berth lengths, deepsea berths, STS
+  cranes, LBCT 3.5M+ TEU) — see `GET /api/terminals`. Source: POLB terminal fact sheets (polb.com).
+- **SYNTHETIC, labelled `DEMO_AIS`:** the vessel queue and the 14-day hourly congestion series, produced
+  by the SimPy discrete-event simulation (`app/services/simulation.py`) — the operational layer no
+  public dataset exposes.
+- **AIS batch pipeline (real-data path):** `scripts/ais/build-congestion.ts` / `import-series.ts` in the
+  legacy tree convert a real NOAA AccessAIS export into hourly congestion; the same schema (`CongestionObservation`)
+  is used here with `source="AIS"`. Data source: NOAA Office for Coastal Management, AccessAIS
+  (https://marinecadastre.gov/accessais/).
 
 ## 6. Useful commands
 
 | Command | What it does |
 |---|---|
-| `bun run dev` | Next.js dev server on port 3000 (logs tee'd to `dev.log`) |
-| `bun run lint` | ESLint over the repo |
-| `bun run db:push` | Apply `src/prisma/schema.prisma` to PostgreSQL |
-| `bun run db:seed` | Wipe + reseed demo data (deterministic) |
-| `bun scripts/ais/build-congestion.ts <ais.csv> <out.csv>` | Real AIS CSV → congestion series |
-| `bun scripts/ais/import-series.ts <series.csv>` | Load a congestion series into the DB (`source="AIS"`) |
+| `uv run uvicorn app.main:app --reload` | Run the FastAPI gateway (:8000) |
+| `uv run python -m app.seed` | Reseed reference data + SimPy operations layer |
+| `npm run dev` (in `frontend/`) | Run the React/Vite dashboard (:5173) |
+| `npm run build` (in `frontend/`) | Type-check + production build |
+| `curl localhost:8000/api/forecast?zone=Z-PORT` | LightGBM forecast + bands + validation |
 
-## 7. Troubleshooting
+## 7. API endpoints
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/api/overview` | GET | KPIs, zone status, alerts, hotspots, anomalies |
+| `/api/forecast?zone=` | GET | LightGBM forecast (72h), bands, model card, per-horizon validation |
+| `/api/optimise` | GET(latest)/POST | OR-Tools CP-SAT BAP/QCAP run (POST accepts a scenario body) |
+| `/api/scenarios` | POST | Baseline-vs-scenario impact assessment |
+| `/api/routing` | GET | Divert / slow-steam / priority-window / hold recommendations |
+| `/api/plan` | GET(`?text=1`)/POST | 72h plan JSON or printable text |
+| `/api/terminals` | GET | REAL POLB capacity + crane/yard/gate state |
+| `/api/vessels` | GET | Queue enriched with assignments |
+| `/api/anomalies` | GET | Isolation Forest flags |
+| `/api/hotspots` | GET | Risk-score ranking + binding resource |
+| `/api/export?type=` | GET | CSV: assignments / routing / vessels / forecast |
+| `/api/bob` | GET/POST | Assistant history / message (Claude + deterministic fallback) |
+
+## 8. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `EADDRINUSE` / port 3000 already busy | another process holds port 3000 (e.g. a previous dev server) | kill it (`lsof -i :3000`, then kill the PID) or start on another port: `PORT=3001 bun run dev` (URL becomes http://localhost:3001) |
-| Prisma error: *Environment variable not found: DATABASE_URL* | `.env` missing from the app root (`src/`) | create it (from `src/`): `cp .env.example .env`, then re-run `bun run db:push` |
-| Prisma error: *Can't reach database server* / `ECONNREFUSED` | PostgreSQL is not running (or is on another port) | start the service (`pg_ctl start`, or the Windows "postgresql-x64-*" service) and confirm the port/host in `DATABASE_URL` |
-| Prisma error: *Authentication failed for user "postgres"* | wrong password/user in `DATABASE_URL` | fix the credentials in `src/.env` (use your PostgreSQL user + password) |
-| Prisma error: *database "portflow_sbx" does not exist* | the database was never created | `createdb -U postgres portflow_sbx` (or `CREATE DATABASE portflow_sbx;` in psql), then `bun run db:push` |
-| Charts empty / zone cards show 0 / "no data" | schema was pushed but never seeded | run `bun run db:seed`, then reload the page — the engines need the 14-day history and the vessel queue |
-| `POST /api/optimise` or `POST /api/plan` returns 500 | DB empty, stale, or corrupted (e.g. killed mid-seed) | `bunx prisma db push --force-reset && bun run db:seed`; check `dev.log` for the stack trace |
-| Bob replies marked `deterministic` instead of LLM mode | the backend LLM (z-ai-web-dev-sdk) is unreachable/without quota — the **engines still ran** (see the `actions` metadata on the message) | this is the designed fallback: answers stay engine-grounded; restore SDK/network access and Bob switches back to `mode: "llm"` automatically |
-| ESLint errors on `bun run lint` | style/type issues (unused vars, `any`, hooks deps) | fix the reported files; config is `eslint.config.mjs` (eslint-config-next). Do not merge with a red lint — see `CONTRIBUTING.md` |
-| Forecast looks flat/implausible after an AIS import | the imported series is short or gappy (short export window) | re-run `build-congestion.ts` over a 1–2 month export; or `bun run db:seed` to restore the labelled demo series |
+| `Can't reach database server` / `ECONNREFUSED` | PostgreSQL not running | start the service; check host/port in `DATABASE_URL` |
+| `database "portflow" does not exist` | DB not created | `createdb -U postgres portflow` |
+| `Authentication failed for user` | wrong credentials | fix `DATABASE_URL` in `src/backend/.env` |
+| `uv: command not found` | uv not installed | install uv (prereq) — uv manages Python 3.11 |
+| Frontend shows “Loading…” forever | backend not running or wrong port | start uvicorn on :8000 (Vite proxies `/api` there) |
+| Bob replies `mode: deterministic` | no `ANTHROPIC_API_KEY` (or Claude unreachable) | engines still ran; set the key to enable Claude phrasing |
+| CP-SAT takes long on `/api/optimise` | 28 vessels × berths × crane options | it is capped at 8 s; results are cached for 120 s |
 
-## 8. What "running" should look like
+## 9. What "running" should look like
 
-- Overview: 5 zone cards (port-wide + 4 terminals) with index/queue/wait, trend and level badges; alerts (e.g. long-waiting vessels, heavy reefer loads).
-- Forecast: 72 h curve with shaded 80 % band, hotspot ranking by forecast peak, model card with MAE₂₄/MAE₇₂/R²/skill.
-- Berth & Cranes: after **Run optimiser**, assignments + FIFO vs optimised metrics with deltas.
-- Routing: per-vessel divert / slow-steam / priority-window recommendations with $ savings.
-- 72-Hr Plan: 12 shift cards + printable text (`GET /api/plan?text=1`).
-- Bob AI: answers cite engine-run actions; fallback answers are visibly marked deterministic.
+- **Overview:** KPI cards, 5 zone cards with sparklines + level badges, hotspot risk with binding
+  resource, Isolation Forest anomaly flags.
+- **Forecast:** 72 h LightGBM curve with an 80 % quantile band, model card (version, MAE, skill), and a
+  per-horizon validation table.
+- **Berth & Cranes:** scenario sliders (crane availability, productivity), CP-SAT vs FIFO metrics, a 72 h
+  Gantt, assignment table, and the real terminal/crane/yard/gate table.
+- **Routing:** divert / slow-steam / priority / hold cards with $ savings and confidence.
+- **72-Hr Plan:** 12 shift cards + top actions + CSV export.
+- **Bob AI:** answers with the tool-calls it executed and the mode (`llm` / `deterministic`).
