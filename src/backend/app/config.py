@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # database
-    database_url: str = "sqlite:///./portflow.db"
+    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/portflow"  # Postgres-only stack: models use JSONB, which SQLite cannot store
     db_echo: bool = False
 
     # api

@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List
 
-import requests
+import httpx  # std dep (replaces requests: identical call signature, already in pyproject)
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -24,7 +24,7 @@ LOGGER = logging.getLogger(__name__)
 def _fetch_open_meteo(params: Dict[str, Any]) -> Dict[str, Any]:
     settings = get_settings()
     url = f"{settings.open_meteo_base}/v1/forecast"
-    response = requests.get(url, params=params, timeout=10)
+    response = httpx.get(url, params=params, timeout=10)
     response.raise_for_status()
     return response.json()
 
