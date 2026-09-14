@@ -20,6 +20,21 @@ def _fmt(ts) -> str:
     return ts.strftime("%m/%d %H:%MZ")
 
 
+def _confidence_by_bucket(port_fc) -> dict:
+    """Per-horizon confidence from the forecast's own validation buckets (W3).
+
+    Blends the holdout-style MAE with the forecast σ (the band-width driver):
+    ``confidence = 1 - clamp((MAE + σ) / 40, 0, 1)`` — so it degrades with horizon
+    instead of reporting a flat "99%" just because the level is near-constant.
+    """
+    out: dict[str, float] = {}
+    for b in (getattr(port_fc, "validation", None) or {}).get("buckets", []):
+        mae = float(b.get("mae") or 0.0)
+        sigma = float(b.get("sigma") or 0.0)
+        out[str(b["label"])] = round(1 - min(1.0, (mae + sigma) / 40.0), 2)
+    return out
+
+
 def build_plan(ctx, forecasts: dict, optimiser_out: dict, routing: list[dict],
                forecast_run_id: int | None = None, optimiser_run_id: int | None = None,
                model_version: str | None = None) -> dict:
@@ -27,6 +42,7 @@ def build_plan(ctx, forecasts: dict, optimiser_out: dict, routing: list[dict],
     assignments = optimiser_out.get("assignments", [])
     vessel_by_id = {v.id: v for v in ctx.vessels}
     port_fc = forecasts["Z-PORT"]
+    confidence_by_bucket = _confidence_by_bucket(port_fc)      # W3: per-horizon confidence
 
     shifts = []
     total_crane_hours = 0.0
@@ -139,6 +155,7 @@ def build_plan(ctx, forecasts: dict, optimiser_out: dict, routing: list[dict],
         "top_actions": top_actions[:4],
         "idle_berth_hours_pct": max(0.0, idle_pct),
         "deferred_count": len(optimiser_out.get("deferred", [])),
+        "confidence_by_bucket": confidence_by_bucket,
         # auditability (K req.): which runs produced this plan
         "forecast_run_id": forecast_run_id,
         "optimiser_run_id": optimiser_run_id,

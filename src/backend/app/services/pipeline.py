@@ -15,6 +15,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .. import reference as ref
+from ..config import get_settings
 from ..models import (
     AnomalyFlag,
     Assignment,
@@ -117,20 +118,59 @@ def run_hotspots(ctx: EngineContext, forecasts: dict, anomalies: list[dict], db:
     return hotspot_svc.compute_hotspots(ctx, forecasts, anomalies)
 
 
+def _with_feature_defaults(scenario: dict | None) -> dict:
+    """Merge the W3 **tidal** feature flag into the scenario (W3 default-path wiring).
+
+    Every caller of ``run_optimiser`` funnels through here, so a plain ``build_full(db)`` — the
+    read paths behind overview/plan/routing/catalog, the MCP server, and the tests — solves with
+    tidal windows enforced instead of silently skipping them for want of a scenario dict.
+
+    ``setdefault`` semantics matter: an **explicit** value always wins, so the API edge (which
+    resolves the request body / query param) and the UI toggle can still switch tidal off. Only
+    an *unspecified* key falls back to the configured flag.
+
+    ``incremental`` is deliberately NOT defaulted here. It is a performance mode backed by a
+    process-global warm-start cache, so enabling it implicitly would make every read path's
+    solve budget depend on whatever ran before it — order-dependent results, and non-deterministic
+    tests. It is opted into explicitly at the API edge (routers/optimise.py), which is what the
+    UI's "Incremental re-solve" toggle drives.
+    """
+    settings = get_settings()
+    out = dict(scenario or {})
+    out.setdefault("tidal", bool(settings.feature_tidal))
+    return out
+
+
+def _optimizer_cache_key(ctx: EngineContext, scenario: dict) -> str:
+    """Cache identity for an optimiser run: problem instance + effective solver knobs.
+
+    `SCHEDULE_CHANGE` scenarios keep the same vessel/berth ids and counts — only ETAs move —
+    so the key must also cover ETAs, or the scenario silently returns the baseline plan
+    (test_optimizer_cache_key_distinguishes_eta_shift pins this).
+    """
+    ctx_sig = (len(ctx.vessels), len(ctx.berths),
+               sum(v.id for v in ctx.vessels) % 10_000_019,
+               sum(b.id for b in ctx.berths) % 1_000_003,
+               sum(int(round(v.eta_hours * 10)) for v in ctx.vessels) % 1_000_003)
+    return f"{ctx.t0.isoformat()}|{ctx_sig}|{sorted(scenario.items())}"
+
+
 def run_optimiser(ctx: EngineContext, forecasts: dict, scenario: dict | None = None, db: Session | None = None) -> dict:
     global _opt_cache, _opt_cache_at
-    scenario = scenario or {}
-    ckey = f"{ctx.t0.isoformat()}|{sorted(scenario.items())}"
+    scenario = _with_feature_defaults(scenario)
+    # W3 fix: the cache key MUST include a context fingerprint — scenario runs mutate the
+    # context (berths/vessels) in memory, so keying on t0+scenario alone returned stale results.
+    ckey = _optimizer_cache_key(ctx, scenario)
     if db is None and _opt_cache["key"] == ckey and _opt_cache["out"] and (time.time() - _opt_cache_at) < CACHE_TTL:
-        return _opt_cache["out"]
+        return dict(_opt_cache["out"])   # copy: callers annotating run_id must not mutate the cache
     if db is None:
         with _opt_lock:  # single-flight: don't run two CP-SAT solves for the same key
             if _opt_cache["key"] == ckey and _opt_cache["out"] and (time.time() - _opt_cache_at) < CACHE_TTL:
-                return _opt_cache["out"]
+                return dict(_opt_cache["out"])
             out = opt_svc.optimise(ctx, {}, scenario)
             _opt_cache = {"key": ckey, "out": out}
             _opt_cache_at = time.time()
-            return out
+            return dict(out)
     out = opt_svc.optimise(ctx, {}, scenario)
     if db is not None:
         run = OptimiserRun(
@@ -159,6 +199,7 @@ def run_routing(ctx: EngineContext, forecasts: dict, optimiser_out: dict, db: Se
                 eta_shift_hours=r.get("eta_shift_hours", 0), predicted_wait_hours=r["predicted_wait_hours"],
                 est_savings_usd=r["est_savings_usd"], confidence=r["confidence"], tier=r["tier"],
                 rationale=r.get("rationale"), sustained=bool(r.get("sustained")),
+                option_detail=r.get("option_detail"),   # W3: in-port alternates + berthing window
             ))
         db.commit()
     return recs

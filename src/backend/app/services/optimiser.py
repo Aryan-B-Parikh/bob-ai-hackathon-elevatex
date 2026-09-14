@@ -23,11 +23,53 @@ import time
 from ortools.sat.python import cp_model
 
 from .. import reference as ref
+from ..config import get_settings
+from . import tides
 
 SCALE = 10                 # ticks per hour
 HORIZON = 72
 MAX_SOLVE_SECONDS = 8.0
+INCREMENTAL_SOLVE_SECONDS = 3.0   # warm-started re-plans start from a good solution → shorter budget
 NOMINAL_CRANE_REACH_FT = 210.0   # STS outreach assumption (documented)
+
+# W3: a small, realistic crane-count option set keeps the CP-SAT model small enough to
+# reach OPTIMAL (the previous 2..kmax range produced ~2x the booleans and stalled at FEASIBLE).
+CRANE_OPTION_SET = (2, 3, 4, 6, 8)
+
+# W3: warm-start cache for incremental re-optimise (POST /api/optimise?incremental=1),
+# keyed by EXACT problem instance with LRU eviction. A single global slot was shown to
+# pollute across instances (a scenario solve evicting the base incumbent), so lookup is
+# always by key and a miss simply solves cold — never a stale-hinted plan.
+_WARM_MAX_INSTANCES = 4
+# key (t0iso, instance-sig) -> (last touched epoch, {vessel_id: (berth_id, cranes, start_ticks)})
+_warm: dict[tuple, tuple[float, dict[int, tuple[int, int, int]]]] = {}
+
+
+def _instance_sig(berths, queue, *, move_rate: float | None = None, tidal: bool = False) -> tuple:
+    """Fingerprint of the exact problem instance a solution was valid for.
+
+    A warm start is only meaningful against the *same* BAP/QCAP instance: if a scenario
+    changed the crane pool, the berth set, or the vessel queue, the cached assignment may
+    reference berths or crane counts that no longer exist. Hints are non-binding in CP-SAT,
+    so a mismatch could not produce an infeasible plan — but it would silently degrade the
+    very thing incremental mode exists to speed up, so the guard is exact rather than fuzzy.
+
+    `move_rate` and `tidal` are part of the fingerprint because they change the solve math
+    itself: service durations (hence every start tick) scale with the move rate, and tidal
+    windows change which start hours are even allowed. A hint computed at 28 moves/h with
+    tides off must never steer a 24 moves/h run with tides on.
+    """
+    return (
+        tuple(sorted((b.id, b.cranes_max, round(b.depth_ft, 3)) for b in berths)),
+        tuple(sorted((v.id, round(v.draft_ft, 3), v.dest_zone_code, total_moves(v),
+                      round(ready_hour(v), 3)) for v in queue)),
+        round(float(move_rate), 3) if move_rate is not None else None,
+        bool(tidal),
+    )
+
+
+def _crane_options(kmax: int) -> list[int]:
+    return sorted({k for k in (*CRANE_OPTION_SET, kmax) if 2 <= k <= kmax})
 
 
 def ready_hour(v) -> float:
@@ -112,6 +154,7 @@ def _fifo_baseline(vessels, berths, move_rate: float, horizon: int) -> tuple[lis
 
 def optimise(ctx, params: dict | None = None, scenario: dict | None = None) -> dict:
     """Solve the BAP/QCAP with CP-SAT; return assignments + baseline + deltas."""
+    global _warm
     params = params or {}
     scenario = scenario or {}
     horizon = int(params.get("horizon_hours", HORIZON))
@@ -136,6 +179,12 @@ def optimise(ctx, params: dict | None = None, scenario: dict | None = None) -> d
     berths_by_zone: dict[str, list] = {}
     for b in berths:
         berths_by_zone.setdefault(b.zone_code, []).append(b)
+    # W3: tidal windows are a hard constraint when enabled. Membership test, not `or`:
+    # an explicit `tidal: False` must switch the constraint OFF, which `scenario.get("tidal",
+    # False) or flag` could never express once FEATURE_TIDAL defaults to true. When the key is
+    # absent the flag decides, so the constraint still binds on paths that pass no scenario.
+    use_tidal = bool(scenario["tidal"]) if "tidal" in scenario else bool(get_settings().feature_tidal)
+    draft_by_id = {v.id: v.draft_ft for v in queue}
 
     model = cp_model.CpModel()
     tmax = (horizon + 200) * SCALE
@@ -162,7 +211,14 @@ def optimise(ctx, params: dict | None = None, scenario: dict | None = None) -> d
         presence = []
         for b in fits:
             kmax = max(2, min(b.cranes_max, ref.MAX_CRANES_PER_VESSEL))
-            for k in range(2, kmax + 1):
+            # --- W3 tidal window: a deep-draft vessel may only berth at high water
+            allowed_ticks = None
+            if use_tidal and tides.needs_tide(b.depth_ft, v.draft_ft):
+                hours = tides.allowed_start_hours(b.id, b.depth_ft, v.draft_ft, horizon)
+                if not hours:
+                    continue                      # never enough water at this berth -> unusable
+                allowed_ticks = [h * SCALE for h in hours]
+            for k in _crane_options(kmax):
                 var = model.NewBoolVar(f"x_{v.id}_{b.id}_{k}")
                 x[(v.id, b.id, k)] = var
                 presence.append(var)
@@ -171,6 +227,8 @@ def optimise(ctx, params: dict | None = None, scenario: dict | None = None) -> d
                 iv = model.NewOptionalFixedSizeIntervalVar(start[v.id], size, var, f"iv_{v.id}_{b.id}_{k}")
                 intervals_by_berth[b.id].append(iv)
                 intervals_by_term.setdefault(b.terminal_code, []).append((iv, k))
+                if allowed_ticks is not None:
+                    model.AddAllowedAssignments([start[v.id]], [[t] for t in allowed_ticks]).OnlyEnforceIf(var)
         model.Add(sum(presence) <= 1)
         model.Add(sum(presence) == 1).OnlyEnforceIf(served[v.id])
         model.Add(sum(presence) == 0).OnlyEnforceIf(served[v.id].Not())
@@ -184,14 +242,17 @@ def optimise(ctx, params: dict | None = None, scenario: dict | None = None) -> d
         if intervals_by_berth[b.id]:
             model.AddNoOverlap(intervals_by_berth[b.id])
 
-    # crane-pool cumulative per terminal: simultaneous cranes <= available pool
+    # Crane-pool cumulative per terminal. Per-berth crane caps are derived from the pool
+    # (cap = avail // n_berths), so sum(caps) <= pool and the constraint is IMPLIED; we only add
+    # the explicit cumulative when floor rounding could not guarantee it (W3: smaller model → OPTIMAL).
+    caps_by_term: dict[str, int] = {}
+    for b in berths:
+        caps_by_term[b.terminal_code] = caps_by_term.get(b.terminal_code, 0) + b.cranes_max
     for term in ctx.terminals:
         entries = intervals_by_term.get(term.code, [])
-        if not entries:
+        if not entries or caps_by_term.get(term.code, 0) <= crane_pool[term.code]:
             continue
-        ivs = [e[0] for e in entries]
-        demands = [e[1] for e in entries]
-        model.AddCumulative(ivs, demands, crane_pool[term.code])
+        model.AddCumulative([e[0] for e in entries], [e[1] for e in entries], crane_pool[term.code])
 
     makespan = model.NewIntVar(0, tmax, "makespan")
     for v in queue:
@@ -200,8 +261,11 @@ def optimise(ctx, params: dict | None = None, scenario: dict | None = None) -> d
     model.Add(makespan >= 0)
 
     # objective (spec §17): minimise alpha*priority-weighted wait + beta*makespan + gamma*crane use
-    # - delta*priority bonus. A per-vessel service reward forces maximum throughput; a small
-    # move tiebreak avoids systematically dodging large ships. Throughput rewards >> wait costs.
+    # - delta*priority bonus. COUNT_W only forces *throughput cardinality* (serve as many vessels
+    # as berth-hours allow); it carries no judgement about *which* vessels. MOVES_W is 0, i.e.
+    # cargo volume plays no part in the objective — a high-move ULCV can be deferred while a
+    # small feeder is served. Volume shows up in the reported deltas for transparency, never in
+    # the minimise.
     present_ids = [v for v in queue if v.id in served]
     COUNT_W = 1_000_000      # reward per vessel served (throughput)
     WAIT_W = 50              # alpha
@@ -225,8 +289,29 @@ def optimise(ctx, params: dict | None = None, scenario: dict | None = None) -> d
     )
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = MAX_SOLVE_SECONDS
-    solver.parameters.num_search_workers = 4
+    solver.parameters.num_search_workers = 8
+    # W3: warm-start from the previous solution when the caller asks for it; a hinted re-plan
+    # begins from a good incumbent, so it gets a shorter budget than a cold solve (that is the
+    # whole point of incremental re-optimise). Requires a cached solution for the same plan
+    # origin AND the same problem instance — otherwise there is nothing valid to hint with.
+    #
+    # `optimise()` itself stays deterministic: it reads `scenario["incremental"]` only, never a
+    # global flag, so a direct engine call does exactly what its argument says (the unit tests
+    # depend on this). The FEATURE_INCREMENTAL default is applied one layer up, in
+    # pipeline._with_feature_defaults(), which every router and the MCP server funnel through.
+    # Contrast `use_tidal` above, which *is* read here: a tidal window is a safety constraint
+    # and must bind on every path, including a direct optimise() call that passes no scenario.
+    warm_key = (ctx.t0.isoformat(), _instance_sig(berths, queue, move_rate=move_rate, tidal=use_tidal))
+    warm = _warm.get(warm_key)
+    incremental = bool(scenario.get("incremental")) and warm is not None
+    solver.parameters.max_time_in_seconds = INCREMENTAL_SOLVE_SECONDS if incremental else MAX_SOLVE_SECONDS
+    if incremental:
+        for vid, (bid, k, ticks) in warm[1].items():
+            var = x.get((vid, bid, k))
+            if var is not None and vid in start:
+                model.AddHint(var, 1)
+                model.AddHint(start[vid], ticks)
+                model.AddHint(served[vid], 1)
     t_start = time.perf_counter()
     status = solver.Solve(model)
     solve_ms = int((time.perf_counter() - t_start) * 1000)
@@ -265,6 +350,38 @@ def optimise(ctx, params: dict | None = None, scenario: dict | None = None) -> d
             deferred.append({"vessel_id": v.id, "vessel_name": v.name, "reason": f"Solver {status_name}"})
 
     assignments.sort(key=lambda a: a["start_hour"])
+
+    # W3: report the optimality gap — a time-capped MIP may return FEASIBLE, and a supervisor
+    # should see how far the incumbent could be from the proven bound.
+    gap_pct = None
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        obj_v = solver.ObjectiveValue()
+        bound = solver.BestObjectiveBound()
+        if math.isfinite(bound):
+            gap_pct = round(abs(obj_v - bound) / max(1.0, abs(obj_v)) * 100, 2)
+
+    # W3: record the solved instance for future warm starts, keyed by exact instance with LRU
+    # eviction (max _WARM_MAX_INSTANCES). Only a *solved* instance is stored: caching a failed
+    # solve would poison the key with nothing.
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE) and assignments:
+        _warm[(ctx.t0.isoformat(), _instance_sig(berths, queue, move_rate=move_rate, tidal=use_tidal))] = (
+            time.time(),
+            {a["vessel_id"]: (a["berth_id"], a["cranes"], int(round(a["start_hour"] * SCALE)))
+             for a in assignments},
+        )
+        while len(_warm) > _WARM_MAX_INSTANCES:
+            _warm.pop(min(_warm, key=lambda k: _warm[k][0]))
+    tidal_feasible = True
+    if use_tidal:
+        berth_by_id = {b.id: b for b in berths}
+        for a in assignments:
+            b = berth_by_id[a["berth_id"]]
+            if tides.needs_tide(b.depth_ft, draft_by_id.get(a["vessel_id"], 0.0)) and not tides.is_open(
+                b.id, b.depth_ft, draft_by_id.get(a["vessel_id"], 0.0), int(round(a["start_hour"]))
+            ):
+                tidal_feasible = False
+                break
+
     fifo_slots, fifo_deferred = _fifo_baseline(ctx.vessels, berths, move_rate, horizon)
     m_opt = _metrics(assignments, berths, deferred, horizon)
     m_base = _metrics(fifo_slots, berths, fifo_deferred, horizon)
@@ -291,6 +408,20 @@ def optimise(ctx, params: dict | None = None, scenario: dict | None = None) -> d
         "metrics": m_opt,
         "baseline": m_base,
         "deltas": deltas,
-        "weights": ref.OBJECTIVE_WEIGHTS,
-        "params": {"horizon_hours": horizon, "move_rate_per_crane_hour": move_rate, "crane_factor": crane_factor},
+        # W3: the constants CP-SAT *actually* minimised with — never the nominal §17 dict.
+        "weights": {
+            "count_throughput": COUNT_W,
+            "wait_alpha": WAIT_W,
+            "makespan_beta": MAKESPAN_W,
+            "crane_gamma": CRANE_W,
+            "priority_bonus_delta": PRIO_W,
+            "moves_tiebreak": MOVES_W,
+            "wait_weight_formula": "1 + anchored_hours/48 + reefer_units/300",
+        },
+        "params": {"horizon_hours": horizon, "move_rate_per_crane_hour": move_rate,
+                   "crane_factor": crane_factor, "tidal": use_tidal, "incremental": incremental,
+                   "tidal_feasible": tidal_feasible, "gap_pct": gap_pct, "solver_status": status_name},
+        "tidal_feasible": tidal_feasible,
+        "incremental": incremental,
+        "gap_pct": gap_pct,
     }
