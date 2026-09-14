@@ -5,6 +5,9 @@ import tailwindcss from "@tailwindcss/vite";
 // React + Vite dashboard (plan §1). API calls are proxied to the FastAPI gateway.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  optimizeDeps: {
+    exclude: ["maplibre-gl"],
+  },
   server: {
     host: true,
     port: 5173,

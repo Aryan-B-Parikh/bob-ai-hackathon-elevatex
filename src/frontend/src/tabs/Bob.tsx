@@ -38,7 +38,7 @@ export default function Bob() {
         <div className="flex-1 space-y-3 overflow-y-auto pr-1" style={{ maxHeight: "58vh" }}>
           {!msgs.length && <div className="muted text-sm">Ask about congestion, hotspots, the optimiser, routing or the 72h plan. Every answer runs the engines; `mode` shows llm vs deterministic fallback. (IBM Bob uses the same brain via MCP.)</div>}
           {msgs.map((m, i) => (
-            <div key={i} className={`card-2 p-2 ${m.role === "user" ? "ml-10" : "mr-10"}`}>
+            <div key={i} className={`card-2 p-2 ${m.role === "user" ? "ml-3 sm:ml-10" : "mr-3 sm:mr-10"}`}>
               <div className="text-xs muted">{m.role}{m.mode ? ` · ${m.mode}` : ""}</div>
               <div className="text-sm whitespace-pre-wrap">{m.content}</div>
               {!!m.actions?.length && <div className="mt-1 flex flex-wrap gap-1">{m.actions.map((a) => <span key={a} className="chip muted text-[10px]">{a}</span>)}</div>}
@@ -47,17 +47,17 @@ export default function Bob() {
           {busy && <div className="muted text-sm">Bob is running the engines…</div>}
           <div ref={endRef} />
         </div>
-        <div className="flex gap-2 mt-3">
+        <div className="flex items-center gap-2 mt-3">
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()}
             placeholder="e.g. what's the congestion outlook for the next 72 hours?"
-            className="card-2 flex-1 px-3 py-2 text-sm" style={{ color: "var(--text)" }} />
-          <button onClick={() => send()} disabled={busy} className="chip" style={{ background: "var(--accent)", color: "#04231f", borderColor: "transparent" }}>Ask</button>
+            className="card-2 flex-1 min-w-0 px-3 py-2 text-sm" style={{ color: "var(--text)" }} />
+          <button onClick={() => send()} disabled={busy} className="chip font-medium shrink-0 cursor-pointer" style={{ background: "var(--brand)", color: "#ffffff", borderColor: "transparent" }}>Ask</button>
         </div>
       </Card>
       <Card>
         <h3 className="font-semibold mb-2 text-sm">Quick prompts</h3>
         <div className="space-y-2">
-          {quick.map((q) => <button key={q} onClick={() => send(q)} className="chip block w-full text-left text-xs">{q}</button>)}
+          {quick.map((q) => <button key={q} onClick={() => send(q)} className="chip block w-full text-left text-xs break-words">{q}</button>)}
         </div>
       </Card>
     </div>

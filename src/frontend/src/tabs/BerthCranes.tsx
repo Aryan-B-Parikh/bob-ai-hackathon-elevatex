@@ -24,19 +24,19 @@ export default function BerthCranes() {
   return (
     <div className="space-y-4">
       <Card>
-        <div className="flex flex-wrap items-end gap-6">
-          <div>
+        <div className="flex flex-wrap items-end gap-4 sm:gap-6">
+          <div className="w-full xs:w-auto">
             <div className="muted text-xs mb-1">Crane availability: <b className="accent">{Math.round(crane * 100)}%</b></div>
-            <input type="range" min={0.5} max={1} step={0.05} value={crane} onChange={(e) => setCrane(+e.target.value)} className="w-56" />
+            <input type="range" min={0.5} max={1} step={0.05} value={crane} onChange={(e) => setCrane(+e.target.value)} className="w-full xs:w-48 sm:w-56" />
           </div>
-          <div>
+          <div className="w-full xs:w-auto">
             <div className="muted text-xs mb-1">STS productivity: <b className="accent">{rate} moves/crane-h</b></div>
-            <input type="range" min={20} max={35} step={1} value={rate} onChange={(e) => setRate(+e.target.value)} className="w-56" />
+            <input type="range" min={20} max={35} step={1} value={rate} onChange={(e) => setRate(+e.target.value)} className="w-full xs:w-48 sm:w-56" />
           </div>
-          <button onClick={apply} disabled={busy} className="chip" style={{ background: "var(--accent)", color: "#04231f", borderColor: "transparent", padding: "6px 14px" }}>
+          <button onClick={apply} disabled={busy} className="w-full xs:w-auto px-3.5 py-1.5 rounded-md text-xs font-semibold bg-[var(--brand)] hover:bg-[var(--brand-hover)] text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50">
             {busy ? "Solving CP-SAT…" : "Run scenario"}
           </button>
-          {opt && <span className="muted text-xs">solver <b className="accent">{opt.solver}</b> · {opt.status} · {opt.solve_ms}ms · tidal_feasible {String(opt.tidal_feasible)}</span>}
+          {opt && <span className="muted text-xs w-full sm:w-auto break-words">solver <b className="accent">{opt.solver}</b> · {opt.status} · {opt.solve_ms}ms · tidal_feasible {String(opt.tidal_feasible)}</span>}
         </div>
       </Card>
 
@@ -44,7 +44,7 @@ export default function BerthCranes() {
 
       {opt && (
         <>
-          <div className="grid md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3">
             <Kpi label="Serviced" value={opt.metrics.serviced} sub={`FIFO ${opt.baseline.serviced} · deferred ${opt.metrics.deferred}`} />
             <Kpi label="Total wait" value={`${opt.metrics.total_wait_hours}h`} sub={`FIFO ${opt.baseline.total_wait_hours}h (Δ ${opt.deltas.wait_total}h)`} tone="var(--accent)" />
             <Kpi label="Weighted wait" value={`${opt.metrics.weighted_wait_hours}h`} sub={`FIFO ${opt.baseline.weighted_wait_hours}h`} />
@@ -68,15 +68,15 @@ export default function BerthCranes() {
                 ).sort().map(([berth, list]: any) => (
                   <div key={berth} className="flex items-center gap-2 py-1">
                     <div className="mono text-xs" style={{ width: 110 }}>{berth}</div>
-                    <div className="relative flex-1" style={{ height: 22, background: "#0e1729", border: "1px solid var(--line)", borderRadius: 6 }}>
+                    <div className="relative flex-1" style={{ height: 22, background: "var(--bg-surface-elevated)", border: "1px solid var(--border-subtle)", borderRadius: 6 }}>
                       {list.map((a: any, i: number) => (
                         <div key={i} title={`${a.vessel_name} · +${a.start_hour}→${a.end_hour}h · ${a.cranes} cranes`}
-                          className="absolute top-0 h-full text-[10px] flex items-center justify-center"
+                          className="absolute top-0 h-full text-[10px] flex items-center justify-center font-medium"
                           style={{
                             left: `${(a.start_hour / maxHour) * 100}%`,
                             width: `${Math.max(1.2, ((a.end_hour - a.start_hour) / maxHour) * 100)}%`,
-                            background: "rgba(45,212,191,0.35)", border: "1px solid #2dd4bf", borderRadius: 4,
-                            color: "#e6edf7", overflow: "hidden",
+                            background: "var(--brand-soft)", border: "1px solid var(--brand-border)", borderRadius: 4,
+                            color: "var(--text-primary)", overflow: "hidden",
                           }}>
                           {a.vessel_name.replace("M/V ", "")} ×{a.cranes}
                         </div>
@@ -91,7 +91,7 @@ export default function BerthCranes() {
           <Card>
             <h3 className="font-semibold mb-2">Assignments ({opt.assignments.length}) · deferred ({opt.deferred.length})</h3>
             <div className="overflow-x-auto max-h-80">
-              <table>
+              <table className="w-full min-w-[540px]">
                 <thead><tr><th>Vessel</th><th>Berth</th><th>Terminal</th><th>Start</th><th>End</th><th>Cranes</th><th>Wait h</th></tr></thead>
                 <tbody>
                   {opt.assignments.map((a: any) => (
