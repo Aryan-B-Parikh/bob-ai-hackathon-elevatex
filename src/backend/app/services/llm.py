@@ -29,7 +29,7 @@ def _client():
     from anthropic import Anthropic  # imported lazily so the app runs without the dep configured
 
     s = get_settings()
-    return Anthropic(api_key=s.anthropic_api_key), s.anthropic_model
+    return Anthropic(api_key=s.anthropic_api_key, timeout=20.0, max_retries=1), s.anthropic_model
 
 
 def narrate(text_plan: str, summary: dict) -> tuple[str, str]:

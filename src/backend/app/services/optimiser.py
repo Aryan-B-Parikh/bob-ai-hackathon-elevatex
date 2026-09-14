@@ -26,8 +26,6 @@ from .. import reference as ref
 
 SCALE = 10                 # ticks per hour
 HORIZON = 72
-DEFER_SLACK_HOURS = 24
-BIG_THROUGHPUT = 1_000_000
 MAX_SOLVE_SECONDS = 8.0
 NOMINAL_CRANE_REACH_FT = 210.0   # STS outreach assumption (documented)
 

@@ -7,6 +7,7 @@ every run so outputs are reproducible and auditable.
 
 from __future__ import annotations
 
+import threading
 import time
 from datetime import datetime
 
@@ -43,11 +44,15 @@ DATASET_NOTE = (
 )
 DAILY_OP_COST_USD = ref.DAILY_OP_COST_USD
 
-_fc_cache: dict = {"key": None, "forecasts": None}
+_fc_cache: dict = {"key": None, "forecasts": None, "run_id": None}
 _fc_cache_at: float = 0.0
 _opt_cache: dict = {"key": None, "out": None}
 _opt_cache_at: float = 0.0
 CACHE_TTL = 120.0
+# single-flight guards: FastAPI runs `def` endpoints in a threadpool, so concurrent
+# requests must not duplicate the heavy forecast/CP-SAT work (audit B4).
+_fc_lock = threading.Lock()
+_opt_lock = threading.Lock()
 
 
 def all_zone_codes() -> list[str]:
@@ -58,21 +63,24 @@ def run_forecasts(ctx: EngineContext, db: Session | None = None, force: bool = F
     """Train + roll out the LightGBM forecast per zone (cached by model time)."""
     global _fc_cache, _fc_cache_at
     key = ctx.t0.isoformat()
-    if not force and _fc_cache["key"] == key and _fc_cache["forecasts"] and (time.time() - _fc_cache_at) < CACHE_TTL:
-        return _fc_cache["forecasts"]
+    with _fc_lock:
+        if not force and _fc_cache["key"] == key and _fc_cache["forecasts"] and (time.time() - _fc_cache_at) < CACHE_TTL:
+            return _fc_cache["forecasts"]
 
-    forecasts = {}
-    for zone in all_zone_codes():
-        zone_vessels = ctx.vessels if zone == "Z-PORT" else [v for v in ctx.vessels if v.dest_zone_code == zone]
-        forecasts[zone] = fc_svc.forecast_zone(
-            zone_code=zone, zone_name=ref.ZONE_LABELS[zone], history=ctx.history.get(zone, []),
-            vessels=zone_vessels, capacity=zone_capacity(ctx, zone), t0=ctx.t0,
-        )
-    _fc_cache = {"key": key, "forecasts": forecasts}
-    _fc_cache_at = time.time()
-    if db is not None:
-        persist_forecast_run(db, forecasts, ctx)
-    return forecasts
+        forecasts = {}
+        for zone in all_zone_codes():
+            zone_vessels = ctx.vessels if zone == "Z-PORT" else [v for v in ctx.vessels if v.dest_zone_code == zone]
+            forecasts[zone] = fc_svc.forecast_zone(
+                zone_code=zone, zone_name=ref.ZONE_LABELS[zone], history=ctx.history.get(zone, []),
+                vessels=zone_vessels, capacity=zone_capacity(ctx, zone), t0=ctx.t0,
+            )
+        # provenance: keep the persisted run id so the plan can cite it (audit B1)
+        run_id = _fc_cache.get("run_id") if _fc_cache.get("key") == key else None
+        if db is not None:
+            run_id = persist_forecast_run(db, forecasts, ctx)
+        _fc_cache = {"key": key, "forecasts": forecasts, "run_id": run_id}
+        _fc_cache_at = time.time()
+        return forecasts
 
 
 def persist_forecast_run(db: Session, forecasts: dict, ctx: EngineContext) -> int:
@@ -88,7 +96,7 @@ def persist_forecast_run(db: Session, forecasts: dict, ctx: EngineContext) -> in
     for z, fc in forecasts.items():
         for p in fc.points:
             db.add(ForecastPoint(run_id=run.id, zone_code=z, hour=p.hour, ts=p.ts, index=p.index,
-                                 queue=p.queue, wait=p.wait, yard_util=p.yard_util, lo=p.lo, hi=p.hi))
+                                 queue=p.queue, wait=p.wait, yard_util_pct=p.yard_util, lo=p.lo, hi=p.hi))
     db.commit()
     return run.id
 
@@ -115,10 +123,15 @@ def run_optimiser(ctx: EngineContext, forecasts: dict, scenario: dict | None = N
     ckey = f"{ctx.t0.isoformat()}|{sorted(scenario.items())}"
     if db is None and _opt_cache["key"] == ckey and _opt_cache["out"] and (time.time() - _opt_cache_at) < CACHE_TTL:
         return _opt_cache["out"]
-    out = opt_svc.optimise(ctx, {}, scenario)
     if db is None:
-        _opt_cache = {"key": ckey, "out": out}
-        _opt_cache_at = time.time()
+        with _opt_lock:  # single-flight: don't run two CP-SAT solves for the same key
+            if _opt_cache["key"] == ckey and _opt_cache["out"] and (time.time() - _opt_cache_at) < CACHE_TTL:
+                return _opt_cache["out"]
+            out = opt_svc.optimise(ctx, {}, scenario)
+            _opt_cache = {"key": ckey, "out": out}
+            _opt_cache_at = time.time()
+            return out
+    out = opt_svc.optimise(ctx, {}, scenario)
     if db is not None:
         run = OptimiserRun(
             solver=out["solver"], status=out["status"], objective=out["objective"], solve_ms=out["solve_ms"],
@@ -252,7 +265,13 @@ def build_full(db: Session, scenario: dict | None = None, persist: bool = True) 
     optimiser_out = run_optimiser(ctx, forecasts, scenario, db if persist else None)
     routing = run_routing(ctx, forecasts, optimiser_out, db if persist else None)
     model_version = forecasts["Z-PORT"].model["model_version"]
+    # provenance fallback: cite the latest persisted forecast run on read paths (audit B1)
+    forecast_run_id = _fc_cache.get("run_id")
+    if forecast_run_id is None:
+        forecast_run_id = db.execute(select(ForecastRun.id).order_by(ForecastRun.id.desc())).scalars().first()
+    if optimiser_out.get("run_id") is None:
+        optimiser_out["run_id"] = db.execute(select(OptimiserRun.id).order_by(OptimiserRun.id.desc())).scalars().first()
     plan_out = build_plan_output(ctx, forecasts, optimiser_out, routing,
-                                 forecast_run_id=_fc_cache.get("run_id"), model_version=model_version)
+                                 forecast_run_id=forecast_run_id, model_version=model_version)
     return {"ctx": ctx, "forecasts": forecasts, "anomalies": anomalies, "hotspots": hotspots,
             "optimiser": optimiser_out, "routing": routing, "plan": plan_out}

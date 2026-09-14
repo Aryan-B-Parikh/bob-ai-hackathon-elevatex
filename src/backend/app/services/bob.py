@@ -17,7 +17,6 @@ import re
 
 from sqlalchemy.orm import Session
 
-from .. import reference as ref
 from ..models import ChatMessage
 from . import llm, pipeline
 
@@ -131,4 +130,4 @@ def respond(db: Session, message: str, persist: bool = True) -> dict:
             "engine_data": pack}
 
 
-__all__ = ["detect_intent", "build_pack", "deterministic_answer", "respond", "INTENTS", "ref"]
+__all__ = ["detect_intent", "build_pack", "deterministic_answer", "respond", "INTENTS"]

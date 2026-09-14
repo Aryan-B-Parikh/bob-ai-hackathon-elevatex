@@ -194,7 +194,7 @@ def get_terminals() -> dict:
     db = _session()
     try:
         f = _full(db, persist=False)
-        return {"source": ref.__doc__, "terminals": [
+        return {"source": "Port of Long Beach terminal fact sheets (real berth/crane capacity); yard/gate figures are documented demo values.", "terminals": [
             {"code": t.code, "name": t.name, "pier": t.pier, "berth_length_ft": t.berth_length_ft,
              "deepsea_berths": t.deepsea_berths, "gantry_cranes": t.gantry_cranes,
              "capacity_teu_m": t.capacity_teu_m, "zone_code": t.zone_code, "note": t.note,

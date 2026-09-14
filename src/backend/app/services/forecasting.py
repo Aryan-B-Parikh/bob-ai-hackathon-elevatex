@@ -15,7 +15,7 @@ multi-origin rollouts give MAE / R^2 / skill-vs-persistence and per-horizon sigm
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import lightgbm as lgb
 import numpy as np
@@ -70,7 +70,7 @@ class ForecastResult:
 # ------------------------------------------------------------------ features
 def _feature_matrix(idx, q, w, yard, ms_of, arrival6, load_factor, t):
     m = lambda a, f, to: float(np.mean(a[max(0, f): to + 1]))  # noqa: E731
-    d = datetime.utcfromtimestamp(ms_of(t) / 1000.0)
+    d = datetime.fromtimestamp(ms_of(t) / 1000.0, tz=timezone.utc)
     hod = d.hour + d.minute / 60.0
     return [
         idx[t] / 100.0,

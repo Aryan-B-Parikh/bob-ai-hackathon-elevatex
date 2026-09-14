@@ -28,7 +28,7 @@ class ScenarioBody(BaseModel):
 def latest(db: Session = Depends(get_db)):
     run = db.execute(select(OptimiserRun).order_by(OptimiserRun.id.desc())).scalars().first()
     if run is None:
-        return pipeline.build_full(db, persist=True)["optimiser"]
+        return pipeline.build_full(db, persist=False)["optimiser"]
     rows = db.execute(select(Assignment).where(Assignment.run_id == run.id).order_by(Assignment.sequence)).scalars().all()
     berths = {b.id: b for b in db.execute(select(Berth)).scalars().all()}
     vessels = {v.id: v for v in db.execute(select(VesselCall)).scalars().all()}

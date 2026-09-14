@@ -33,6 +33,28 @@ def test_full_pipeline_runs():
 
 
 @requires_db
+def test_persist_path_writes_provenance():
+    """Regression: cold-cache + persist=True must write ForecastPoint rows and cite the runs.
+
+    (This crashed with `'yard_util' is an invalid keyword argument for ForecastPoint` —
+    the column is `yard_util_pct` — and was hidden while the forecast cache was warm.)
+    """
+    from app.db import SessionLocal
+    from app.services import pipeline
+
+    db = SessionLocal()
+    try:
+        pipeline._fc_cache = {"key": None, "forecasts": None, "run_id": None}  # force cold
+        full = pipeline.build_full(db, persist=True)
+    finally:
+        db.close()
+    s = full["plan"]["summary"]
+    assert s["forecast_run_id"] is not None, "plan must cite the forecast run"
+    assert s["optimiser_run_id"] is not None, "plan must cite the optimiser run"
+    assert s["model_version"].startswith("lgbm")
+
+
+@requires_db
 def test_forecast_is_uncertainty_banded():
     from app.db import SessionLocal
     from app.services import pipeline

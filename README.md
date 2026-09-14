@@ -178,5 +178,6 @@ The **entire stack matches the technical plan** — SimPy generates the operatio
 - [`docs/bob-mcp.md`](docs/bob-mcp.md) — IBM Bob MCP integration (tools, resources, registration)
 - [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) — honest code-vs-spec status
 - [`TEAM_PLAN.md`](TEAM_PLAN.md) — 4-way parallel work division + merge protocol (Phase 0 ✅ done)
+- [`AUDIT.md`](AUDIT.md) — code-based audit vs the 3 spec docs (findings + fixes)
 - [`docs/api-contract.md`](docs/api-contract.md) — frozen API contract (paths, shapes, DB fields)
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — dev workflow

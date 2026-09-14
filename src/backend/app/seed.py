@@ -148,7 +148,7 @@ def seed(reset: bool = False) -> None:
             avg_wait_hours=o["avg_wait_hours"], index=o["index"], yard_util_pct=o["yard_util_pct"],
             source=o["source"], is_measured=o["is_measured"], confidence=o["confidence"],
         ) for o in sim.observations]
-        db.bulk_save_objects(rows)
+        db.add_all(rows)
         db.commit()
         print(f"  congestion history: {len(rows)} rows across {len(set(o['zone_code'] for o in sim.observations))} zones")
 
