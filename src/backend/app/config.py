@@ -18,7 +18,13 @@ class Settings(BaseSettings):
     port: int = 8000
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
-    # llm (Claude via Anthropic) — narrative only
+    # llm (narrative layer) — IBM Bob (harness) preferred, then Claude, then deterministic
+    llm_provider: str = "auto"          # auto | bob | claude | deterministic
+    bob_api_key: str = ""               # maps to env BOB_API_KEY
+    bob_team_id: str = ""               # only for a "general" API key
+    bob_cli: str = "bob"
+    bob_max_turns: int = 3
+    bob_timeout_s: int = 240
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5"
 

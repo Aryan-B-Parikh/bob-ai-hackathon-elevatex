@@ -111,14 +111,14 @@ The remaining gaps are feature-depth items (a few modules) rather than stack div
 
 | Surface | Implementation | Status |
 |---|---|---|
-| IBM Bob via **MCP** | `app/mcp_server.py` exposes the engines as 11 MCP tools, 4 resources, 2 prompts; register with `src/backend/bob-mcp.config.json` | ✅ surface built + tested; Bob registration is the operator step |
-| In-app assistant | `services/bob.py` (shared brain) via `POST /api/bob` | ✅ |
-| Grounding | answers use ONLY engine JSON; `actions` metadata lists the tools run; deterministic fallback | ✅ |
+| IBM Bob → our engines (MCP) | `app/mcp_server.py`: 11 tools, 4 resources, 2 prompts; registered with Bob (`bob mcp list`) | ✅ verified live (`mcp__portflow__rank_hotspots` → success) |
+| Our app → IBM Bob | `services/bob_agent.py` runs the real Bob agent (`bob run --format stream-json`); `services/llm.py` resolves provider bob→claude→deterministic | ✅ verified: `provider=bob · mode=llm · actions=['mcp__portflow__rank_hotspots']` |
+| Grounding | answers use ONLY engine data (Bob fetches it via MCP); `actions` lists the tools run; deterministic fallback | ✅ |
+| Recursion guard | `PORTFLOW_NO_BOB_AGENT=1` inherited by the MCP child | ✅ |
 
-**Honest note:** IBM Bob itself is not installed in this environment, so it cannot be invoked here — but the
-integration surface it consumes (a standards-compliant MCP server) is implemented and verified with a local
-MCP client (`list_tools` + `call_tool` returned live engine data). Once Bob is pointed at the server
-(`docs/bob-mcp.md`), Bob drives LightGBM / OR-Tools CP-SAT / routing directly.
+**Honest note:** IBM Bob is wired **both** ways and verified end-to-end on this machine (Bob CLI 2.0.2,
+`BOB_API_KEY` supplied via the environment only — never committed). Without the key the narrative layer
+falls back to Claude, then to a deterministic template over the same engine numbers.
 
 ## 5b. What is DONE (verified running)
 

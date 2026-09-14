@@ -28,4 +28,4 @@ def history(db: Session = Depends(get_db)):
 @router.post("/bob")
 def ask(body: BobBody, db: Session = Depends(get_db)):
     out = bob_svc.respond(db, body.message, persist=True)
-    return {"content": out["content"], "actions": out["actions"], "mode": out["mode"], "intent": out["intent"]}
+    return {k: out[k] for k in ("content", "actions", "mode", "provider", "intent")}

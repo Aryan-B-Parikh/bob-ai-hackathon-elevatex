@@ -12,6 +12,23 @@ generator. Nothing is mocked or hard-coded; each tool returns engine-computed nu
 The dashboard's **Bob AI** tab uses the *same* service (`app/services/bob.py`), so what you see in the app
 is exactly what Bob sees.
 
+## 0. Two directions (both are wired)
+
+* **Bob → our engines:** Bob calls our MCP tools (sections 1–6 below).
+* **Our app → Bob:** the dashboard's "Bob AI" tab and the 72h plan narrative run the **real Bob agent**
+  (`app/services/bob_agent.py`) which uses those same MCP tools. Enable it with:
+
+  ```bash
+  setx BOB_API_KEY "<your-key>"          # new shell afterwards
+  # .env:  LLM_PROVIDER=auto             # auto = Bob → Claude → deterministic
+  ```
+
+  Each reply reports `provider` (bob | claude | deterministic) and `actions` (the MCP tools Bob ran):
+  `provider=bob · mode=llm · actions=['mcp__portflow__rank_hotspots']`.
+  Recursion is prevented by `PORTFLOW_NO_BOB_AGENT=1`, which Bob passes to the MCP child.
+
+---
+
 ## 1. Run the server
 
 ```bash
