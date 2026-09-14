@@ -7,9 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Berth, Crane, Gate, Terminal, YardZone
+from ..models import Berth, Crane, Gate, Terminal, YardZone, VesselScheduleUpload
 from ..serialize import terminal_to_dict, vessel_to_dict
 from ..services import pipeline
+from ..pipelines.schedule import parse_schedule
 
 router = APIRouter(prefix="/api", tags=["catalog"])
 
@@ -62,8 +63,62 @@ def hotspots(db: Session = Depends(get_db)):
 
 @router.post("/vessels/upload")
 async def upload_schedule(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """CSV/EDI vessel-schedule upload (Module B). FROZEN SHAPE:
-    {accepted, rejected, errors:[], revisions_created, upload_id, filename, stub}"""
-    raw = await file.read()  # W1: parse in pipelines/schedule.py, dedupe on IMO+voyage_number
-    return {"accepted": 0, "rejected": 0, "errors": [], "revisions_created": 0,
-            "upload_id": None, "filename": file.filename, "bytes": len(raw), "stub": True}
+    """CSV/EDI vessel-schedule upload (Module B).
+    Parses CSV, dedupes on IMO+voyage_number, records upload audit.
+    Returns: {accepted, rejected, errors, revisions_created, upload_id, filename, bytes, stub}
+    """
+    raw = await file.read()
+    try:
+        rows = parse_schedule(raw)
+    except Exception as exc:
+        # parsing error, record as rejected
+        upload = VesselScheduleUpload(
+            filename=file.filename,
+            rows=0,
+            accepted=0,
+            rejected=0,
+            report={"errors": [str(exc)], "created": []},
+        )
+        db.add(upload)
+        db.commit()
+        db.refresh(upload)
+        return {
+            "accepted": 0,
+            "rejected": 0,
+            "errors": [str(exc)],
+            "revisions_created": 0,
+            "upload_id": upload.id,
+            "filename": file.filename,
+            "bytes": len(raw),
+            "stub": False,
+        }
+    # dedupe on IMO + voyage_number
+    seen = set()
+    deduped = []
+    for r in rows:
+        key = (r.get("imo"), r.get("voyage_number"))
+        if key not in seen:
+            seen.add(key)
+            deduped.append(r)
+    accepted = len(deduped)
+    # audit record
+    upload = VesselScheduleUpload(
+        filename=file.filename,
+        rows=len(rows),
+        accepted=accepted,
+        rejected=len(rows) - accepted,
+        report={"errors": [], "created": deduped},
+    )
+    db.add(upload)
+    db.commit()
+    db.refresh(upload)
+    return {
+        "accepted": accepted,
+        "rejected": len(rows) - accepted,
+        "errors": [],
+        "revisions_created": 0,
+        "upload_id": upload.id,
+        "filename": file.filename,
+        "bytes": len(raw),
+        "stub": False,
+    }
