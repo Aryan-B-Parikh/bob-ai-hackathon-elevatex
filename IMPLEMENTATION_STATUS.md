@@ -48,7 +48,7 @@ The remaining gaps are feature-depth items (a few modules) rather than stack div
 | **B** Vessel Schedule Ingestion | IMO, ETD, service, declared-vs-AIS ETA, **revision history** | `VesselCall` (imo, etd_hours, service_string, declared_eta_hours, ais_eta_hours, unresolved, data_confidence) + `EtaRevision` | 🟡 | CSV/EDI upload UI; auto-replan on revision |
 | **C** Berth/Crane/Yard/Gate Capacity | live occupancy, crane availability, yard util, gate queue, maintenance-vs-failure | SimPy produces occupancy/yard/gate state; `Crane.status` + `status_reason` (planned maintenance) | ✅ (synthetic) | live TOS feed |
 | **D** Data Normalisation & Quality | unit normalisation, original+normalised, per-record confidence, completeness score | `CongestionObservation.is_measured/confidence/raw`, `VesselCall.raw/unresolved` | 🟡 | unit-conversion engine; per-terminal completeness score |
-| **E** AIS / Historical KB | tracks, dwell baselines, vintages, cleaning | `CongestionObservation` (source DEMO_AIS/AIS); SimPy history; legacy AIS pipeline | 🟡 | vessel tracks, berth-dwell baselines, data vintages |
+| **E** AIS / Historical KB | tracks, dwell baselines, vintages, cleaning | `CongestionObservation` (source DEMO_AIS/AIS); SimPy history; `app/pipelines/ais.py` (real AccessAIS → series → DB) | 🟡 | vessel tracks, berth-dwell baselines, data vintages |
 | **F** Congestion Forecasting | 24/48/72h queue/wait/**yard util**, ML, uncertainty band, reproducible | `forecasting.py` LightGBM, 4 targets, quantile 0.1/0.9 bands, multi-origin validation, **model_version** | ✅ | exogenous weather signal (pipeline pending) |
 | **G** Hotspot / Bottleneck | binding resource + composite risk score + ranking | `hotspot.py`: w1..w5 risk score, `binding_constraint` (BERTH/CRANE/YARD/GATE), confidence degradation | ✅ | — |
 | **H** Anomaly / Disruption | bunching/outage/weather, robust method, disruption-vs-data-error, min sample | `anomaly.py`: IsolationForest, KIND classifier, `DATA_ERROR` distinction, `MIN_SAMPLES` guard | ✅ | weather-driven detection (needs weather pipeline) |
@@ -65,7 +65,7 @@ The remaining gaps are feature-depth items (a few modules) rather than stack div
 
 | Source | Spec use | Status |
 |---|---|---|
-| NOAA/BOEM **AccessAIS** | historical AIS ground truth | 🟡 pipeline exists in `legacy/scripts/ais` (TS); ships `DEMO_AIS` by default |
+| NOAA/BOEM **AccessAIS** | historical AIS ground truth | ✅ pipeline `src/backend/app/pipelines/ais.py` (Python, tested); ships `DEMO_AIS` by default |
 | **SimPy** synthetic ops layer | synthetic berth/crane/yard/gate state | ✅ implemented (the plan's core synthetic strategy) |
 | **BTS PPFSP** | benchmark/validate | ❌ not integrated |
 | **Open-Meteo** weather | forecast signal + disruption | ❌ config present, batch pipeline not built |
@@ -138,6 +138,6 @@ The remaining gaps are feature-depth items (a few modules) rather than stack div
 ## 7. Honesty notes
 
 - The optimiser is now a **real exact solver (CP-SAT)** — not a heuristic. It enforces berth length/depth, crane reach, no berth overlap and the terminal crane-pool capacity.
-- The vessel queue and 14-day history are **SimPy-simulated and labelled `DEMO_AIS`** — not real AIS. A real AccessAIS path exists in `legacy/`.
+- The vessel queue and 14-day history are **SimPy-simulated and labelled `DEMO_AIS`** — not real AIS. A real AccessAIS path exists in `src/backend/app/pipelines/ais.py`.
 - **Claude is optional and used only to phrase** validated numbers; without a key Bob/plan use a deterministic template over the same engine output.
 - The scenario is deliberately oversubscribed, so CP-SAT trades some average wait against makespan; **cargo volume is not in the spec objective** (reported for transparency).

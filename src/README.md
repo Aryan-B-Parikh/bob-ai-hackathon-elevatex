@@ -13,6 +13,7 @@ src/
 │   │   ├── reference.py         # REAL Port of Long Beach terminals + documented constants
 │   │   ├── seed.py              # DB seed: real reference data + SimPy synthetic layer
 │   │   ├── serialize.py         # dataclass → JSON helpers
+│   │   ├── pipelines/           # batch data loads (NOAA AccessAIS → congestion series → DB)
 │   │   ├── routers/             # one router per capability (overview, forecast, optimise,
 │   │   │                        #   routing, plan, catalog, bob) behind the gateway
 │   │   └── services/
@@ -44,8 +45,8 @@ src/
 ```
 
 **Data & simulation layers** live inside the backend (`app/services/simulation.py` for SimPy,
-`app/reference.py` for the real POLB reference data). The AIS batch pipeline is a separate
-script layer described in `docs/setup-guide.md`.
+`app/reference.py` for the real POLB reference data, `app/pipelines/ais.py` for the real NOAA
+AccessAIS → congestion-series batch load).
 
 ## Technology map (plan §1)
 
@@ -60,6 +61,7 @@ script layer described in `docs/setup-guide.md`.
 | Routing | rule + cost model | `backend/app/services/routing.py` |
 | 72h plan | assembler + **Claude** narrative | `backend/app/services/plan.py`, `llm.py` |
 | Persistence | PostgreSQL (SQLAlchemy 2 + psycopg3) | `backend/app/models.py`, `db.py` |
+| Data pipeline (batch) | NOAA AccessAIS → congestion series | `backend/app/pipelines/ais.py` |
 | Dashboard | React + Vite + Tailwind + Recharts | `frontend/` |
 
 ## Run (short version)

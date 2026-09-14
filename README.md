@@ -92,8 +92,6 @@ bob-ai-hackathon-elevatex/
 └── CONTRIBUTING.md
 ```
 
-> `legacy/` holds the earlier prototype (kept for reference, not part of the submission).
-
 ---
 
 ## ⚡ How to Run
@@ -140,7 +138,7 @@ npm run dev                        # → http://localhost:5173
 
 - **REAL (cited):** the Port of Long Beach terminal capacity table — LBCT Pier E 4,200 ft / 3 berths / 18 STS cranes, 3.5M+ TEU; ITS Pier G 4,250 ft / 14; PCT Pier J 5,902 ft / 14; TTI Pier T 5,000 ft / 16 (POLB fact sheets). These are the optimiser's hard constraints (`GET /api/terminals`).
 - **SYNTHETIC (`DEMO_AIS`):** the vessel queue and 14-day hourly congestion series, produced by the SimPy simulation — the operational layer no public dataset exposes.
-- **REAL pipeline path:** the NOAA AccessAIS batch pipeline (in `legacy/scripts/ais`) converts a genuine AccessAIS CSV into the same `CongestionObservation` schema (`source="AIS"`).
+- **REAL pipeline path:** the NOAA AccessAIS batch pipeline (`src/backend/app/pipelines/ais.py`) converts a genuine AccessAIS CSV into the same `CongestionObservation` schema (`source="AIS"`) — see [`docs/setup-guide.md`](docs/setup-guide.md) §5. Data source: NOAA Office for Coastal Management, AccessAIS (https://marinecadastre.gov/accessais/).
 
 ---
 

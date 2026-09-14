@@ -70,10 +70,15 @@ vessel calls, ETA revisions and 14-day hourly congestion series.
 - **SYNTHETIC, labelled `DEMO_AIS`:** the vessel queue and the 14-day hourly congestion series, produced
   by the SimPy discrete-event simulation (`app/services/simulation.py`) — the operational layer no
   public dataset exposes.
-- **AIS batch pipeline (real-data path):** `scripts/ais/build-congestion.ts` / `import-series.ts` in the
-  legacy tree convert a real NOAA AccessAIS export into hourly congestion; the same schema (`CongestionObservation`)
-  is used here with `source="AIS"`. Data source: NOAA Office for Coastal Management, AccessAIS
-  (https://marinecadastre.gov/accessais/).
+- **AIS batch pipeline (real-data path):** `src/backend/app/pipelines/ais.py` converts a real NOAA
+  AccessAIS export into hourly congestion and loads it into `CongestionObservation` with `source="AIS"`:
+
+  ```bash
+  uv run python -m app.pipelines.ais build <ais_export.csv> congestion-series.csv
+  uv run python -m app.pipelines.ais import congestion-series.csv
+  ```
+
+  Data source: NOAA Office for Coastal Management, AccessAIS (https://marinecadastre.gov/accessais/).
 
 ## 6. Useful commands
 
@@ -81,6 +86,8 @@ vessel calls, ETA revisions and 14-day hourly congestion series.
 |---|---|
 | `uv run uvicorn app.main:app --reload` | Run the FastAPI gateway (:8000) |
 | `uv run python -m app.seed` | Reseed reference data + SimPy operations layer |
+| `uv run python -m app.pipelines.ais build <ais.csv> series.csv` | NOAA AccessAIS export → congestion series |
+| `uv run python -m app.pipelines.ais import series.csv` | Load a series into the DB (`source="AIS"`) |
 | `npm run dev` (in `frontend/`) | Run the React/Vite dashboard (:5173) |
 | `npm run build` (in `frontend/`) | Type-check + production build |
 | `curl localhost:8000/api/forecast?zone=Z-PORT` | LightGBM forecast + bands + validation |
