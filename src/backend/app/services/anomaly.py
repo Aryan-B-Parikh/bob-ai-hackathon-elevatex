@@ -5,6 +5,11 @@ Implements Module H of the requirements doc:
   * robust unsupervised method (Isolation Forest) against each zone's own history
   * distinguishes a genuine disruption from a likely data/sensor error
   * refuses to assert anomalies below a minimum historical sample size
+  * optionally consumes W1 weather (FEATURE_WEATHER) as an extra disruption signal
+
+W2 fix (AUDIT B9): evaluate a rolling 72h window (not just the last 12h) and classify
+from the *most anomalous* point in that window, so an injected outage in the recent past
+is actually surfaced rather than missed.
 """
 
 from __future__ import annotations
@@ -12,11 +17,18 @@ from __future__ import annotations
 import numpy as np
 from sklearn.ensemble import IsolationForest
 
+from ..config import get_settings
+
 MIN_SAMPLES = 96          # 4 days of hourly history before we trust an anomaly call
 CONTAMINATION = 0.04
+ANOMALY_WINDOW = 72       # evaluate the last 3 days, not only the last 12h (B9)
+MIN_WEATHER_ROWS = 24     # need this many past weather hours before adding weather features
+WEATHER_SEVERITY_REF = 0.40
+STAT_Z = 3.5              # robust (MAD) z-score that also counts as an anomaly
 
 
-def _matrix(history) -> tuple[np.ndarray, list[str]]:
+def _matrix(history, weather_rows=None):
+    """Feature matrix + names; appends wind/gust/wave when W1 weather is available."""
     idx = np.array([h.index for h in history], dtype=float)
     q = np.array([h.queue_count for h in history], dtype=float)
     w = np.array([h.avg_wait_hours for h in history], dtype=float)
@@ -27,11 +39,50 @@ def _matrix(history) -> tuple[np.ndarray, list[str]]:
     roll_std = np.array([np.std(idx[max(0, i - win):i + 1]) for i in range(len(idx))])
     X = np.column_stack([idx, q, w, yard, dq, di, roll_std])
     names = ["index", "queue", "wait", "yard_util", "d_queue", "d_index", "index_roll_std"]
-    return X, names
+
+    weather_used = False
+    if weather_rows:
+        wa = {w.get("hours_ago"): w for w in weather_rows if w.get("hours_ago") is not None}
+        covered = sum(1 for h in history if h.hours_ago in wa)
+        if covered >= MIN_WEATHER_ROWS:
+            for f in ("wind_kn", "gust_kn", "wave_m"):
+                col = [float((wa.get(h.hours_ago) or {}).get(f) or 0.0) for h in history]
+                X = np.column_stack([X, np.array(col, dtype=float)])
+                names.append(f)
+            weather_used = True
+    return X, names, weather_used
 
 
-def detect_anomalies(ctx) -> list[dict]:
-    """Run Isolation Forest per terminal zone; return flagged disruptions."""
+def _weather_severity(w: dict | None) -> float:
+    if not w:
+        return 0.0
+    gust = w.get("gust_kn") if w.get("gust_kn") is not None else w.get("wind_kn")
+    wave = w.get("wave_m")
+    vis = w.get("visibility_km")
+    sev = 0.0
+    if gust is not None:
+        sev += 0.6 * _clip((float(gust) - 25.0) / 25.0)
+    if wave is not None:
+        sev += 0.3 * _clip((float(wave) - 2.5) / 2.5)
+    if vis is not None:
+        sev += 0.1 * _clip((5.0 - float(vis)) / 5.0)
+    return _clip(sev)
+
+
+def _clip(x, lo=0.0, hi=1.0) -> float:
+    return max(lo, min(hi, float(x)))
+
+
+def detect_anomalies(ctx, weather=None) -> list[dict]:
+    """Run Isolation Forest per terminal zone; return flagged disruptions.
+
+    ``weather`` is an optional W1 weather series (see forecasting.load_weather_series).
+    Weather is only used when FEATURE_WEATHER is enabled and enough rows align.
+    """
+    settings = get_settings()
+    weather_rows = weather if (settings.feature_weather and weather) else None
+    by_ago = {w.get("hours_ago"): w for w in (weather_rows or []) if w.get("hours_ago") is not None}
+
     flags: list[dict] = []
     for zone_code, history in ctx.history.items():
         if zone_code == "Z-PORT":
@@ -42,35 +93,51 @@ def detect_anomalies(ctx) -> list[dict]:
                 "zone_code": zone_code, "kind": "INSUFFICIENT_DATA", "method": "IsolationForest",
                 "score": 0.0, "is_anomaly": False, "sample_size": n,
                 "detail": f"Only {n}h of history (< {MIN_SAMPLES}h) — anomaly confidence explicitly low.",
-                "features": None,
+                "features": None, "confidence": 0.1, "window_hours": min(n, ANOMALY_WINDOW),
             })
             continue
-        X, names = _matrix(history)
+
+        X, names, weather_used = _matrix(history, weather_rows)
         model = IsolationForest(n_estimators=200, contamination=CONTAMINATION, random_state=0)
         model.fit(X)
         scores = model.decision_function(X)
         preds = model.predict(X)
-        # evaluate the most recent 12h window
-        window = slice(max(0, n - 12), n)
-        window_anoms = int((preds[window] == -1).sum())
-        recent_anom = bool(preds[-1] == -1) or window_anoms >= 3
-        recent_score = float(scores[window].min())
-        last = history[-1]
-        last_dq = float(X[-1, names.index("d_queue")])
-        last_di = float(X[-1, names.index("d_index")])
 
-        if last_dq >= 5:
+        # evaluate a 72h window; classify the single most anomalous point in it
+        start = max(0, n - ANOMALY_WINDOW)
+        window = slice(start, n)
+        window_anoms = int((preds[window] == -1).sum())
+        if_anom = bool((preds[window] == -1).any())
+        recent_score = float(scores[window].min())
+
+        # robust statistical complement (median/MAD) so a sustained outage is not missed
+        med = float(np.median(X[:, 0]))
+        mad = float(np.median(np.abs(X[:, 0] - med))) or 1.0
+        z = (X[:, 0] - med) / (1.4826 * mad)
+        z_win = np.abs(z[window])
+        stat_anom = bool(z_win.max() >= STAT_Z) if len(z_win) else False
+        recent_anom = if_anom or stat_anom
+
+        ai = (start + int(np.argmax(z_win))) if stat_anom else (start + int(np.argmin(scores[window])))
+        pt = history[ai]
+        dq = float(pt.queue_count - (history[ai - 1].queue_count if ai > 0 else pt.queue_count))
+        di = float(pt.index - (history[ai - 1].index if ai > 0 else pt.index))
+        sev = _weather_severity(by_ago.get(pt.hours_ago))
+
+        if abs(dq) > 14 or abs(di) > 40:
+            kind = "DATA_ERROR"  # implausible jump → likely sensor/entry error, not a disruption
+        elif weather_used and sev >= WEATHER_SEVERITY_REF:
+            kind = "WEATHER"
+        elif dq >= 5:
             kind = "BUNCHING"
-        elif (last.yard_util_pct or 0) >= 92:
+        elif (pt.yard_util_pct or 0) >= 92:
             kind = "YARD_SATURATION"
-        elif last.index >= 70 and abs(last_di) < 6:
+        elif pt.index >= 70 and abs(di) < 6:
             kind = "OUTAGE"
-        elif abs(last_dq) > 14 or abs(last_di) > 40:
-            kind = "DATA_ERROR"  # implausible jump → likely sensor/entry error, not a real disruption
         else:
             kind = "VARIANCE"
 
-        z = history[-1]
+        confidence = round(_clip(0.4 * min(1.0, n / 336.0) + 0.6 * _clip(0.5 - recent_score), 0.05, 0.95), 3)
         flags.append({
             "zone_code": zone_code,
             "kind": kind,
@@ -79,12 +146,17 @@ def detect_anomalies(ctx) -> list[dict]:
             "is_anomaly": recent_anom and kind != "DATA_ERROR",
             "sample_size": n,
             "detail": (
-                f"queue={z.queue_count}, wait={z.avg_wait_hours:.0f}h, index={z.index:.0f}, "
-                f"Δqueue(last h)={last_dq:+.0f}, Δindex={last_di:+.0f}. "
-                + ("Recent window flagged anomalous." if recent_anom else "Recent window within normal range.")
+                f"queue={pt.queue_count}, wait={pt.avg_wait_hours:.0f}h, index={pt.index:.0f}, "
+                f"Δqueue(most anomalous h)={dq:+.0f}, Δindex={di:+.0f}. "
+                + (f"Window ({window_anoms} flagged in last {min(n, ANOMALY_WINDOW)}h)."
+                   if recent_anom else "Recent window within normal range.")
+                + (f" Adverse weather coincident (severity {sev:.2f})." if weather_used and sev >= WEATHER_SEVERITY_REF else "")
                 + (" Flagged as probable DATA ERROR (implausible jump) — not a confirmed disruption."
                    if kind == "DATA_ERROR" else "")
             ),
-            "features": {k: round(float(X[-1, i]), 2) for i, k in enumerate(names)},
+            "features": {k: round(float(X[ai, i]), 2) for i, k in enumerate(names)},
+            "confidence": confidence,
+            "window_hours": min(n, ANOMALY_WINDOW),
+            "weather_used": weather_used,
         })
     return flags
