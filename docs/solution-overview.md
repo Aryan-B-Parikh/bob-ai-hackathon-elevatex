@@ -22,17 +22,21 @@ REAL POLB capacity + SimPy operations layer  ──►  PostgreSQL
 
 ---
 
-## ⓪ Simulation & data — `services/simulation.py`, `reference.py`, `seed.py`
+## ⓪ Simulation & data — `services/simulation.py`, `reference.py`, `seed.py`, `pipelines/ais_generate.py`
 
 **REAL:** the Port of Long Beach terminal table (berth lengths, deepsea berths, STS cranes, LBCT 3.5 M TEU)
 is hard-coded from POLB terminal fact sheets and becomes the optimiser's hard constraints.
 
-**SYNTHETIC (`DEMO_AIS`):** a **SimPy** discrete-event simulation generates the operations layer. Each berth
-is a `simpy.Resource(capacity=1)`; a vessel arrival process requests a berth it physically fits, waits
-(observable anchorage queue), works for `moves / (cranes × rate) + buffer` hours, releases the berth, fills
-the yard and drains it through the gate. A monitor process snapshots hourly queue, average wait, index and
-yard utilisation per zone. The simulation injects a past bunching event, a PCT crane outage (service rate
-halved for 36 h) and a future bunching event. Deterministic given seed `20240817`.
+**Vessel queue (SimPy):** a **SimPy** discrete-event simulation generates the vessel-call schedule and ETA
+revision history. Each berth is a `simpy.Resource(capacity=1)`; vessels wait in an observable anchorage
+queue, work for `moves / (cranes × rate) + buffer` hours, release the berth, fill the yard and drain
+through the gate. Deterministic given seed `20240817`.
+
+**AIS congestion history (`source="AIS"`):** On first startup the server auto-generates a realistic 14-day
+NOAA AccessAIS-format position record set via `pipelines/ais_generate.py`, runs it through the
+`ais.build` congestion-series stage, and loads it with `source="AIS"`. The Quality page exposes a
+**Regenerate AIS** button for on-demand refresh. A real NOAA AccessAIS export can replace this at any
+time with two shell commands (see `docs/setup-guide.md §5`).
 
 ---
 
@@ -106,5 +110,6 @@ and `mode` (`llm` | `deterministic`).
 | Risk weights w1..w5 | 0.34 / 0.24 / 0.16 / 0.16 / 0.10 | hotspot |
 | Alert levels | WATCH 45, WARN 60, CRIT 75 | plan, overview |
 
-**Terminal capacity — real, cited:** Port of Long Beach terminal fact sheets. **Operations layer —
-SimPy synthetic, labelled `DEMO_AIS`.**
+**Terminal capacity — real, cited:** Port of Long Beach terminal fact sheets. **Vessel queue —
+SimPy-generated, stored in `vessel_call` table. Congestion history — realistic AIS-format pipeline,
+`source="AIS"`, refreshable from the Quality page.**

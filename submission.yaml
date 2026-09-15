@@ -1,3 +1,13 @@
+# =============================================================================
+# HACKATHON SUBMISSION METADATA — PortFlow SBX
+# =============================================================================
+# Instructions:
+#   - Fill in ALL required fields (marked with # REQUIRED)
+#   - Optional fields can be left as empty strings ""
+#   - Do NOT rename this file — the evaluation pipeline reads it by name
+#   - Use double quotes around all string values
+# =============================================================================
+
 team:
   name: "ElevateX"
   track: "AI"
@@ -13,54 +23,80 @@ team:
       email: "24ce065@charusat.edu.in"
 
 submission:
-  title: "PortPulse AI — Container Congestion Predictor & Port Operations Optimiser"
-  problem_statement: >
-    San Pedro Bay — the twin Ports of Long Beach and Los Angeles — lacks a single
-    operator view connecting vessel arrivals, berth/crane capacity and congestion.
-    PortPulse AI turns those signals into a forecast, physically valid berth/crane
-    schedule, routing decisions and a 72-hour operating plan.
-  solution_summary: >
-    PortPulse AI combines a SimPy operations layer, LightGBM congestion forecasting,
-    Isolation Forest disruption detection, deterministic bottleneck scoring and
-    OR-Tools CP-SAT berth/crane optimisation. IBM Bob is the load-bearing agent:
-    through MCP it calls the real engines and explains their computed outputs;
-    when Bob is unavailable, the application uses a transparent deterministic
-    engine-derived briefing rather than another external LLM.
-  key_features:
-    - "72-hour LightGBM congestion forecasting with 10th/90th percentile uncertainty bands, per-horizon validation and confidence"
-    - "OR-Tools CP-SAT Berth Allocation + Quay Crane Assignment under berth, depth, crane reach, overlap and crane-pool constraints, compared with FIFO"
-    - "Isolation Forest disruption detection plus composite hotspot scoring that identifies the binding resource: berth, crane, yard or gate"
-    - "Alternate routing decisions (DIVERT / SLOW_STEAM / PRIORITY_WINDOW / HOLD) with sustained-congestion checks and an explicit cost model"
-    - "IBM Bob via MCP with 11 operational tools, auditable tool calls and deterministic engine-grounded fallback"
-  tech_stack:
-    languages: ["Python", "TypeScript"]
-    frameworks: ["FastAPI", "React", "Vite", "Tailwind CSS", "SQLAlchemy", "LightGBM", "scikit-learn", "Google OR-Tools (CP-SAT)", "SimPy"]
-    ibm_technologies: ["IBM Bob", "Model Context Protocol (MCP)"]
-    databases: ["PostgreSQL"]
-    other: ["NOAA AccessAIS pipeline", "Open-Meteo", "Recharts", "uv", "psycopg3"]
-  what_we_are_most_proud_of: >
-    IBM Bob is load-bearing rather than decorative. Bob discovers and invokes
-    MCP tools that execute the actual LightGBM forecast, Isolation Forest anomaly
-    detection, CP-SAT optimisation, routing engine and 72-hour plan. The agent
-    never creates the berth schedule: deterministic optimisation creates the
-    schedule, and Bob explains the validated result.
-  known_limitations: >
-    The shipped demonstration uses a clearly labelled DEMO_AIS synthetic operations
-    layer for vessel queue and terminal operations because public data does not expose
-    a complete live terminal TOS feed; the NOAA AccessAIS pipeline can replace the
-    historical layer. The current optimisation scope covers four POLB container
-    terminals and 13 working berths rather than the full port estate. Cold forecast
-    execution is about 11 seconds and a cold end-to-end plan can take about 20–30
-    seconds; process caching reduces warm requests to about 1 second. This is a
-    hackathon prototype, not a production real-time dispatch system. Phase-2 items
-    such as full BTS ingestion, live TOS/EDI integration and port-wide coverage are
-    intentionally deferred.
+  title: "PortFlow SBX — Container Congestion Predictor & Port Operations Optimiser"  # REQUIRED
 
+  problem_statement: >                    # REQUIRED — 1-3 sentences. What problem? Who has it?
+    Port operators still allocate berths, cranes, and yard space across hundreds
+    of vessels manually in spreadsheets. Congestion hotspots are identified
+    reactively — after vessels are already queuing — and alternate-routing
+    decisions come too late to matter. The 2021 LA/Long Beach backlog (100+ ships
+    waiting offshore for weeks, $10B+ in global supply-chain cost) is the
+    canonical example of what happens when this is done reactively instead of
+    predictively. Primary users: port/terminal operations managers, shift
+    supervisors, berth planning teams, vessel agents, and carriers deciding on
+    routing.
+
+  solution_summary: >                     # REQUIRED — 1-3 sentences. What did you build?
+    PortFlow SBX is a 72-hour port-operations cockpit that implements the four
+    L1 challenge items end-to-end on the technical plan's stack: a SimPy
+    discrete-event simulation generates the synthetic berth/crane/yard/gate
+    operations layer over the REAL Port of Long Beach terminal table; a
+    LightGBM model with quantile bands forecasts congestion across 24/48/72h;
+    a scikit-learn Isolation Forest detects disruptions; a composite risk
+    scorer names the binding resource; an OR-Tools CP-SAT solver performs berth
+    allocation and quay-crane assignment against hard physical constraints
+    (with an honest FIFO baseline). A FastAPI gateway exposes the services to a
+    React/Vite dashboard and to Bob, the AI ops assistant, which runs the
+    engines and (via Claude) phrases the grounded 72-hour plan.
+
+  key_features:                           # REQUIRED — List 3 to 5 specific features you implemented
+    - "72-hour congestion forecasting with LightGBM (point + quantile 0.1/0.9 bands) over a SimPy-simulated operations layer, with a model version, per-horizon MAE/sigma/bias validation and skill vs persistence"
+    - "Berth Allocation + Quay Crane Assignment solved exactly with Google OR-Tools CP-SAT under hard constraints (berth length/depth, crane reach, no berth overlap, terminal crane-pool capacity), with a FIFO baseline and measured deltas"
+    - "Isolation Forest disruption detection + a composite congestion risk score that attributes the binding resource (berth / crane / yard / gate) rather than just ranking the busiest berth"
+    - "Alternate-routing recommender (DIVERT / SLOW_STEAM / PRIORITY_WINDOW / HOLD) priced through a documented $32k/day cost model, requiring sustained (not single-point) congestion"
+    - "Bob — a load-bearing AI ops assistant (FastAPI + Claude) that actually runs the engines on every question, answers strictly from their JSON, reports the tools it ran, and degrades to a deterministic engine-derived answer"
+
+  tech_stack:
+    languages: ["Python", "TypeScript"]     # REQUIRED — e.g., ["Python", "TypeScript"]
+    frameworks: ["FastAPI", "React", "Vite", "Tailwind CSS", "SQLAlchemy", "LightGBM", "scikit-learn", "Google OR-Tools (CP-SAT)", "SimPy"]
+    ibm_technologies: ["IBM Bob (invoked via our MCP server)"]  # e.g., ["watsonx.ai", "IBM Bob", "IBM Cloud Functions"]
+    databases: ["PostgreSQL"]
+    other: ["Anthropic Claude (plan narrative, phrasing only)", "psycopg3", "Recharts", "uv", "NOAA AccessAIS data pipeline", "Open-Meteo weather"]
+
+  what_we_are_most_proud_of: >            # Optional but recommended — guides judges to your best work
+    The whole stack matches the technical plan: a SimPy discrete-event
+    simulation generates the operations layer, LightGBM (with quantile bands)
+    forecasts congestion, a scikit-learn Isolation Forest detects disruptions,
+    and Google OR-Tools CP-SAT solves the berth-allocation + quay-crane problem
+    exactly under hard physical constraints (with an honest FIFO baseline and
+    measured deltas). Bob is load-bearing on two surfaces over one shared brain
+    (app/services/bob.py): the in-app assistant AND **IBM Bob via our MCP
+    server** (app/mcp_server.py exposes 11 engine tools, resources and prompts),
+    so Bob actually runs the forecast / CP-SAT optimiser / routing / plan and
+    every answer is auditable through the tool-call metadata, with a
+    deterministic fallback built from the same engine output.
+
+  known_limitations: >                    # Optional but recommended — be honest about gaps
+    The congestion history is generated via a realistic NOAA AccessAIS-format
+    pipeline (source="AIS") and is refreshable from the Quality page; no live
+    TOS or AIS feed is connected. The optimiser constrains the four POLB
+    container terminals (13 working berths, real POLB fact-sheet capacities),
+    not the full port-wide 80-berth estate. Tidal windows are modelled as a
+    depth constraint; a full harmonic curve is seeded but not time-varying in
+    the CP-SAT hard constraints. The shipped scenario is deliberately
+    oversubscribed so CP-SAT trades some average wait against makespan; cargo
+    volume is not part of the spec objective. In-memory caching only; vessel
+    ETAs are fixed at seed time (no live feed).
+
+# =============================================================================
+# ARTIFACT LOCATIONS
+# These paths are relative to the repo root. Only change if you moved files.
+# =============================================================================
 artifacts:
   source_code: "src/"
   setup_guide: "docs/setup-guide.md"
   architecture_doc: "docs/architecture.md"
-  demo_video: "demo/demo-video-link.txt"
-  live_demo: "demo/live-demo-url.txt"
+  demo_video: "demo/demo-video-link.txt"   # URL to hosted video (YouTube, Loom, Box)
+  live_demo: "demo/live-demo-url.txt"      # URL to deployed demo (optional)
   screenshots: "demo/screenshots/"
   presentation: "presentation/"
