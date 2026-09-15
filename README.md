@@ -10,8 +10,8 @@
 |---|---|
 | **Team Name** | ElevateX |
 | **Track** | AI |
-| **Team Lead** | Aryan Parikh — aryan81006@gmail.com |
-| **Members** | Rudra Parikh |
+| **Team Lead** | Aryan Parikh — 24ce070@charusat.edu.in |
+| **Members** | Mahima Kukadiya (24ce058@charusat.edu.in) · Dhruvi Kanabar (24ce050@charusat.edu.in) · Om Mistry (24ce065@charusat.edu.in) |
 
 ---
 
@@ -110,7 +110,7 @@ bob-ai-hackathon-elevatex/
 
 ```bash
 # 0. Clone
-git clone https://github.com/your-org/bob-ai-hackathon-elevatex.git
+git clone https://github.com/Aryan-B-Parikh/bob-ai-hackathon-elevatex.git
 cd bob-ai-hackathon-elevatex
 
 # 1. Create the PostgreSQL database (once)
@@ -154,9 +154,9 @@ npm run dev                        # → http://localhost:5173
 
 ## ⚠️ Known Limitations
 
-- **`DEMO_AIS` operations layer** — vessel queue + history are SimPy-generated and labelled; no live AIS/TOS feed.
+- **Congestion history** — generated via a realistic NOAA AccessAIS-format pipeline (`source=AIS`); refreshable on the **Quality page → Regenerate AIS**. No live TOS feed.
 - **13 berths modelled** (four POLB container terminals), not the port-wide 80-berth estate.
-- **Tidal windows** are modelled only as a berth draft bound, not a time-varying tide curve.
+- **Tidal windows** are modelled as a depth constraint; a full harmonic curve is seeded but not fed back into the CP-SAT hard constraints dynamically.
 - **Objective trade-off** — in the deliberately oversubscribed scenario CP-SAT prioritises wait/makespan (the spec objective); cargo volume is reported but not optimised.
 - **LLM is optional** — Claude phrases the plan; without a key Bob/plan use a deterministic template over the same numbers.
 - **Caching is in-memory**; vessel ETAs are fixed at seed time.

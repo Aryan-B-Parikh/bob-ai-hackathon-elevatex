@@ -9,15 +9,18 @@
 # =============================================================================
 
 team:
-  name: "ElevateX"                        # REQUIRED — e.g., "Orion Squad"
-  track: "AI"                             # REQUIRED — one of: AI | DevOps | Sustainability | Open
+  name: "ElevateX"
+  track: "AI"
   lead:
-    name: "Aryan Parikh"                  # REQUIRED — e.g., "Alice Chen"
-    email: "aryan81006@gmail.com"         # REQUIRED — e.g., "alice.chen@ibm.com"
+    name: "Aryan Parikh"
+    email: "24ce070@charusat.edu.in"
   members:
-    - name: "Rudra Parikh"                # REQUIRED — Team member 1
-      email: "rudra.parikh@example.com"   # TODO: replace with your real email
-    # Add more members by copying the two lines above.
+    - name: "Mahima Kukadiya"
+      email: "24ce058@charusat.edu.in"
+    - name: "Dhruvi Kanabar"
+      email: "24ce050@charusat.edu.in"
+    - name: "Om Mistry"
+      email: "24ce065@charusat.edu.in"
 
 submission:
   title: "PortFlow SBX — Container Congestion Predictor & Port Operations Optimiser"  # REQUIRED
