@@ -34,8 +34,10 @@ from .. import reference as ref
 # ---------------------------------------------------------------- geography
 BBOX = {"lat_min": 33.55, "lat_max": 33.85, "lon_min": -118.45, "lon_max": -118.05}
 ANCHORAGE_RECTS = [  # documented approximations, not official chart polygons
+    # Original outer anchorage (ships waiting further out)
     {"name": "San Pedro Anchorage A/B (approx.)", "lat_min": 33.60, "lat_max": 33.72, "lon_min": -118.30, "lon_max": -118.18},
-    {"name": "Long Beach Anchorage C (approx.)", "lat_min": 33.68, "lat_max": 33.76, "lon_min": -118.15, "lon_max": -118.05},
+    # Expanded to cover all four POLB terminal berth zones (33.73–33.76, -118.22–-118.18)
+    {"name": "Long Beach Terminal Berths (approx.)", "lat_min": 33.72, "lat_max": 33.77, "lon_min": -118.23, "lon_max": -118.17},
 ]
 TERMINAL_ANCHORS = {t["zone_code"]: (t["lat"], t["lon"]) for t in ref.TERMINALS}
 

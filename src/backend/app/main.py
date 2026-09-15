@@ -30,13 +30,19 @@ async def lifespan(app: FastAPI):
             from .seed import seed
             seed()
 
-        # NOTE: Auto-replace of SimPy history with AIS-generated data is intentionally
-        # disabled here.  The ais_generate pipeline concentrates all vessels in 2 anchorage
-        # rectangles, causing Z-LBCT and Z-TTI to receive zero queue records which collapses
-        # LightGBM feature importances and breaks forecast drivers.  The SimPy layer
-        # (source="DEMO_AIS") produces balanced per-zone variance needed for training.
-        # Use POST /api/ais/generate or `python -m app.pipelines.ais_generate` to
-        # opt-in to AIS data manually once zone assignment is corrected.
+        # Load AIS-generated data on startup if the DB has no AIS observations yet.
+        # The generator now uses all 4 terminal anchor points so every zone receives
+        # balanced vessel records — the zone assignment bug is fixed.
+        try:
+            from sqlalchemy import text
+            ais_count = db.execute(text("SELECT COUNT(*) FROM congestion_observation WHERE source='AIS'")).scalar()
+            if ais_count == 0:
+                print("[startup] no AIS data found — generating synthetic AIS history…")
+                from .pipelines.ais_generate import generate_and_load
+                stats = generate_and_load(days=14, seed=20240817)
+                print(f"[startup] AIS pipeline: {stats}")
+        except Exception as _ae:  # noqa: BLE001
+            print(f"[startup] AIS pipeline skipped: {_ae}")
 
         # Refresh weather on every startup so forecasting has the latest Open-Meteo data.
         # Non-fatal: if network is unavailable the forecast falls back to weather_used=False.

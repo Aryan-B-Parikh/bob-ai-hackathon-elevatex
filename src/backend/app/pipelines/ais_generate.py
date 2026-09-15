@@ -43,11 +43,16 @@ _COLUMNS = ["MMSI", "BaseDateTime", "LAT", "LON", "SOG", "COG", "Heading",
 _BBOX_LAT = (33.55, 33.85)
 _BBOX_LON = (-118.45, -118.05)
 
-# ── Anchorage rectangles (matches ais.py ANCHORAGE_RECTS) ─────────────────────
+# ── Per-zone anchor targets (centred on each terminal's documented position) ──
+# Each entry: (zone_code, lat_ctr, lon_ctr, lat_spread, lon_spread, weight)
+# Spread chosen so jitter stays within the ANCHORAGE_RECTS in ais.py and the
+# nearest-neighbour assignment in _zone_for() reliably routes each vessel to the
+# correct zone.  Weights reflect approximate berth capacity share.
 _ANCHORAGES = [
-    # name, lat_ctr, lon_ctr, lat_spread, lon_spread
-    ("San Pedro A/B", 33.66, -118.24, 0.06, 0.06),
-    ("Long Beach C",  33.72, -118.10, 0.04, 0.05),
+    ("Z-LBCT", 33.750, -118.217, 0.015, 0.015, 3),
+    ("Z-ITS",  33.746, -118.203, 0.012, 0.012, 3),
+    ("Z-PCT",  33.741, -118.181, 0.012, 0.012, 2),
+    ("Z-TTI",  33.736, -118.210, 0.012, 0.012, 2),
 ]
 
 # ── Approach waypoints (outside the bbox, 30-50 nm out) ───────────────────────
@@ -105,6 +110,22 @@ def _interp(lat1: float, lon1: float, lat2: float, lon2: float, frac: float):
     return lat1 + frac * (lat2 - lat1), lon1 + frac * (lon2 - lon1)
 
 
+def _pick_anchorage(rng: random.Random) -> tuple[str, float, float]:
+    """Weighted-random anchorage selection; returns (zone_code, lat, lon)."""
+    total = sum(a[5] for a in _ANCHORAGES)
+    r = rng.random() * total
+    for a in _ANCHORAGES:
+        r -= a[5]
+        if r <= 0:
+            zone, lat_ctr, lon_ctr, dlat, dlon, _ = a
+            lat = lat_ctr + rng.uniform(-dlat * 0.8, dlat * 0.8)
+            lon = lon_ctr + rng.uniform(-dlon * 0.8, dlon * 0.8)
+            return zone, lat, lon
+    # fallback
+    a = _ANCHORAGES[-1]
+    return a[0], a[1], a[2]
+
+
 def _generate_vessel_track(
     rng: random.Random,
     arrival_dt: datetime,
@@ -118,10 +139,7 @@ def _generate_vessel_track(
       4. Departure (brief burst of underway records, SOG 8-14 kn)
     """
     records: list[dict] = []
-    anch_name, anch_lat, anch_lon, anch_dlat, anch_dlon = rng.choice(_ANCHORAGES)
-    # final anchor position with jitter
-    anch_lat += rng.uniform(-anch_dlat * 0.8, anch_dlat * 0.8)
-    anch_lon += rng.uniform(-anch_dlon * 0.8, anch_dlon * 0.8)
+    _zone_code, anch_lat, anch_lon = _pick_anchorage(rng)
 
     approach_lat, approach_lon = rng.choice(_APPROACH_WAYPOINTS)
     approach_lat += rng.uniform(-0.05, 0.05)
