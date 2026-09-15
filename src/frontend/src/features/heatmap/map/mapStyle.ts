@@ -3,10 +3,15 @@ import { defaultMapProvider } from "./MapProvider";
 
 /**
  * PortFlow SBX — Map Style Generator
- * Generates restrained, theme-responsive MapLibre style specifications.
- * Works 100% locally and offline without requiring user API keys.
+ * Returns the active provider's style: a hosted vector style URL when the
+ * provider supplies one (OpenFreeMap Positron, keyless), otherwise a locally
+ * built restrained raster style. Works without user API keys.
  */
-export function createMaritimeMapStyle(theme: "dark" | "light"): StyleSpecification {
+export function createMaritimeMapStyle(theme: "dark" | "light"): StyleSpecification | string {
+  if (defaultMapProvider.styleUrl) {
+    return defaultMapProvider.styleUrl;
+  }
+
   const tileSource = defaultMapProvider.getTileSource(theme);
 
   const isDark = theme === "dark";

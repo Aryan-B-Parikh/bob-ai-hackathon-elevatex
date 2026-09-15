@@ -5,15 +5,16 @@
 
 export const MAP_CONFIG = {
   // San Pedro Bay Geography & Terminals Center (POLB & POLA)
-  center: [-118.21, 33.745] as [number, number],
-  defaultZoom: 12.2,
-  minZoom: 10,
+  center: [-118.25, 33.75] as [number, number],
+  defaultZoom: 11,
+  minZoom: 9,
   maxZoom: 17,
 
-  // Geographical bounds constraint around San Pedro Bay to keep operators focused
+  // Geographical bounds constraint around Southern California to keep operators focused
+  // Wider than the tight terminal cluster so the Polaris-style basemap is useful at zoom 11.
   maxBounds: [
-    [-118.45, 33.60], // Southwest coordinate
-    [-117.95, 33.88], // Northeast coordinate
+    [-119.25, 33.20], // Southwest coordinate
+    [-117.25, 34.30], // Northeast coordinate
   ] as [[number, number], [number, number]],
 
   // Restrained 4-Tier Semantic Congestion Thresholds (Phase 2.5)
