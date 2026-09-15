@@ -55,43 +55,41 @@ No key is required to run the app.
 
 ```bash
 cd src/backend
-uv run python -m app.seed            # wipes + reseeds terminals/berths/cranes/yard/gate + SimPy vessels & history
-# full reset (drop + recreate all tables, then reseed):
-uv run python -c "from app.db import drop_all, init_db; drop_all(); init_db()" && uv run python -m app.seed
+# Wipe everything and start fresh (terminals + SimPy layer):
+uv run python -m app.seed --reset
+
+# Or drop + recreate all tables, then reseed:
+uv run python -c "from app.db import drop_all, init_db; drop_all(); init_db()"
+uv run python -m app.seed
 ```
 
-The SimPy layer is deterministic (seed `20240817`): every seed produces the same terminals/berths/cranes,
-vessel calls, ETA revisions and 14-day hourly congestion series.
+On first start the server **auto-generates** the AIS congestion history and weather data — no manual step needed.
 
-## 5. Real vs. synthetic data
+## 5. Data sources
 
-- **REAL, cited:** the Port of Long Beach terminal capacity table (berth lengths, deepsea berths, STS
-  cranes, LBCT 3.5M+ TEU) — see `GET /api/terminals`. Source: POLB terminal fact sheets (polb.com).
-- **SYNTHETIC, labelled `DEMO_AIS`:** the vessel queue and the 14-day hourly congestion series, produced
-  by the SimPy discrete-event simulation (`app/services/simulation.py`) — the operational layer no
-  public dataset exposes.
-- **AIS batch pipeline (real-data path):** `src/backend/app/pipelines/ais.py` converts a real NOAA
-  AccessAIS export into hourly congestion and loads it into `CongestionObservation` with `source="AIS"`:
-
-  ```bash
-  uv run python -m app.pipelines.ais build <ais_export.csv> congestion-series.csv
-  uv run python -m app.pipelines.ais import congestion-series.csv
-  ```
-
-  Data source: NOAA Office for Coastal Management, AccessAIS (https://marinecadastre.gov/accessais/).
+| Source | What | How loaded |
+|---|---|---|
+| **REAL POLB terminals** | Berth lengths, cranes, capacity — `GET /api/terminals` | `reference.py` (hardcoded from POLB fact sheets) |
+| **AIS congestion history** | 14-day hourly queue / wait / index per zone — `source="AIS"` | Auto-generated on startup via `pipelines/ais_generate.py`; refresh via **Quality page → Regenerate AIS** or `POST /api/ais/generate` |
+| **Open-Meteo weather** | 72h wind / gust / wave / visibility | Auto-fetched on startup; refresh via **Quality page → Refresh Weather** or `POST /api/weather/refresh` |
+| **Vessel schedule** | Vessel queue — uploadable CSV | **Quality page → Upload CSV** or `POST /api/vessels/upload` |
+| **Real NOAA AccessAIS** | Replace generated history with a real export | `uv run python -m app.pipelines.ais build <ais.csv> series.csv && uv run python -m app.pipelines.ais import series.csv` |
 
 ## 6. Useful commands
 
 | Command | What it does |
 |---|---|
 | `uv run uvicorn app.main:app --reload` | Run the FastAPI gateway (:8000) |
-| `uv run python -m app.seed` | Reseed reference data + SimPy operations layer |
-| `uv run python -m app.pipelines.ais build <ais.csv> series.csv` | NOAA AccessAIS export → congestion series |
-| `uv run python -m app.pipelines.ais import series.csv` | Load a series into the DB (`source="AIS"`) |
+| `uv run python -m app.seed` | Reseed reference data (safe — skips if data exists) |
+| `uv run python -m app.seed --reset` | Force full wipe + reseed |
+| `uv run python -m app.pipelines.ais_generate` | Generate + load AIS history (14d) into DB |
+| `uv run python -m app.pipelines.ais build <ais.csv> series.csv` | Real NOAA AccessAIS CSV → congestion series |
+| `uv run python -m app.pipelines.ais import series.csv` | Load series into DB (`source="AIS"`) |
 | `uv run python -m app.mcp_server` | Run the MCP server (stdio) for IBM Bob |
 | `npm run dev` (in `frontend/`) | Run the React/Vite dashboard (:5173) |
 | `npm run build` (in `frontend/`) | Type-check + production build |
 | `curl localhost:8000/api/forecast?zone=Z-PORT` | LightGBM forecast + bands + validation |
+| `curl localhost:8000/api/ais/status` | Current congestion history source + row count |
 
 ## 7. API endpoints
 
@@ -99,17 +97,23 @@ vessel calls, ETA revisions and 14-day hourly congestion series.
 |---|---|---|
 | `/api/overview` | GET | KPIs, zone status, alerts, hotspots, anomalies |
 | `/api/forecast?zone=` | GET | LightGBM forecast (72h), bands, model card, per-horizon validation |
-| `/api/optimise` | GET(latest)/POST | OR-Tools CP-SAT BAP/QCAP run (POST accepts a scenario body) |
+| `/api/optimise` | GET(latest)/POST | OR-Tools CP-SAT BAP/QCAP run (POST accepts scenario body) |
 | `/api/scenarios` | POST | Baseline-vs-scenario impact assessment |
 | `/api/routing` | GET | Divert / slow-steam / priority-window / hold recommendations |
 | `/api/plan` | GET(`?text=1`)/POST | 72h plan JSON or printable text |
 | `/api/terminals` | GET | REAL POLB capacity + crane/yard/gate state |
 | `/api/vessels` | GET | Queue enriched with assignments |
+| `/api/vessels/upload` | POST | Upload CSV vessel schedule → auto-replan |
 | `/api/anomalies` | GET | Isolation Forest flags |
 | `/api/hotspots` | GET | Risk-score ranking + binding resource |
+| `/api/quality` | GET | Per-terminal data completeness scores |
+| `/api/weather` | GET | Open-Meteo 72h wind/gust/wave/visibility |
+| `/api/weather/refresh` | POST | Re-fetch weather from Open-Meteo |
+| `/api/ais/status` | GET | Current congestion history source + stats |
+| `/api/ais/generate` | POST | Generate + load realistic AIS history |
 | `/api/export?type=` | GET | CSV: assignments / routing / vessels / forecast |
 | `/api/bob` | GET/POST | Assistant history / message (Claude + deterministic fallback) |
-| **MCP** `app.mcp_server` | stdio / HTTP | 11 engine tools + resources + prompts for **IBM Bob** |
+| **MCP** `app.mcp_server` | stdio | 11 engine tools + resources + prompts for **IBM Bob** |
 
 ## 8. Troubleshooting
 
