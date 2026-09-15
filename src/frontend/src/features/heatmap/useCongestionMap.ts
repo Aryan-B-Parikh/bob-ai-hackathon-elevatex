@@ -3,11 +3,11 @@ import { useOverview, useTerminals, useVessels } from "../../hooks";
 import type { EnrichedTerminal, MapFilterState, AnchorageZone, VesselItem } from "./types";
 
 const ANCHORAGE_GEOMETRY = [
-  { match: "a", code: "ANCH-A", name: "San Pedro Anchorage A (Outer Harbor)", lat: 33.722, lon: -118.225 },
-  { match: "b", code: "ANCH-B", name: "San Pedro Anchorage B (Long Beach Outer)", lat: 33.715, lon: -118.195 },
-  { match: "c", code: "ANCH-C", name: "Long Beach Anchorage C", lat: 33.705, lon: -118.165 },
-  { match: "241", code: "ANCH-241", name: "Anchorage 241–243", lat: 33.700, lon: -118.145 },
-  { match: "fermin", code: "ANCH-F", name: "Outside Point Fermin", lat: 33.690, lon: -118.300 },
+  { match: "san pedro anchorage a", code: "ANCH-A", name: "San Pedro Anchorage A (Outer Harbor)", lat: 33.722, lon: -118.225 },
+  { match: "san pedro anchorage b", code: "ANCH-B", name: "San Pedro Anchorage B (Long Beach Outer)", lat: 33.715, lon: -118.195 },
+  { match: "long beach anchorage c", code: "ANCH-C", name: "Long Beach Anchorage C", lat: 33.705, lon: -118.165 },
+  { match: "anchorage 241", code: "ANCH-241", name: "Anchorage 241–243", lat: 33.700, lon: -118.145 },
+  { match: "point fermin", code: "ANCH-F", name: "Outside Point Fermin", lat: 33.690, lon: -118.300 },
 ];
 
 export function useCongestionMap() {
