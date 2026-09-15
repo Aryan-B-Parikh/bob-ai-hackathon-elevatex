@@ -81,7 +81,6 @@ async def upload_schedule(file: UploadFile = File(...), db: Session = Depends(ge
                 "upload_id": upload.id, "filename": file.filename, "bytes": len(raw), "stub": False}
 
     rows = parsed["rows"]
-    parsed_rejected = len(parsed["rejected"])
     zone_by_code = {t.zone_code: t for t in db.execute(select(Terminal)).scalars().all()}
     existing_keys = {(v.imo, v.voyage_number) for v in db.execute(select(VesselCall)).scalars().all()}
     created: list[dict] = []
