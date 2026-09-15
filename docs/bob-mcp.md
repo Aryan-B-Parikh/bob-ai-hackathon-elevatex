@@ -1,55 +1,29 @@
 # IBM Bob integration — MCP server
 
-PortFlow SBX exposes its engines to **IBM Bob** through a **Model Context Protocol (MCP)** server
-(`src/backend/app/mcp_server.py`). This is the pattern in the hackathon template guide
-(`IBM Bob CLI → MCP call → Your MCP Server`): **Bob is the client; our engines are the tools.**
+**PortPulse AI** exposes its operational engines to **IBM Bob** through a Model Context Protocol (MCP) server (`src/backend/app/mcp_server.py`). Bob is the load-bearing agent; the application does not use a second external LLM provider.
 
-When Bob is registered, a prompt like *"what's the congestion outlook for the next 72 hours?"* makes Bob
-call `forecast_congestion` / `rank_hotspots`, and *"optimise the berths and cranes"* makes Bob call
-`optimise_berth_cranes` — i.e. Bob actually runs LightGBM / OR-Tools CP-SAT / routing / the plan
-generator. Nothing is mocked or hard-coded; each tool returns engine-computed numbers.
+## 1. Two directions
 
-The dashboard's **Bob AI** tab uses the *same* service (`app/services/bob.py`), so what you see in the app
-is exactly what Bob sees.
+- **Bob → engines:** IBM Bob discovers and calls our MCP tools. The tools execute LightGBM forecasting, Isolation Forest anomaly detection, OR-Tools CP-SAT optimisation, routing and plan generation.
+- **App → Bob:** the dashboard's Bob AI surface can invoke the real Bob agent, which uses the same MCP tools.
 
-## 0. Two directions (both are wired)
+If Bob is unavailable, the application falls back only to a transparent deterministic briefing generated from engine output. There is **no Claude or other external LLM fallback**.
 
-* **Bob → our engines:** Bob calls our MCP tools (sections 1–6 below).
-* **Our app → Bob:** the dashboard's "Bob AI" tab and the 72h plan narrative run the **real Bob agent**
-  (`app/services/bob_agent.py`) which uses those same MCP tools. Enable it with:
-
-  ```bash
-  setx BOB_API_KEY "<your-key>"          # new shell afterwards
-  # .env:  LLM_PROVIDER=auto             # auto = Bob → Claude → deterministic
-  ```
-
-  Each reply reports `provider` (bob | claude | deterministic) and `actions` (the MCP tools Bob ran):
-  `provider=bob · mode=llm · actions=['mcp__portflow__rank_hotspots']`.
-  Recursion is prevented by `PORTFLOW_NO_BOB_AGENT=1`, which Bob passes to the MCP child.
-
----
-
-## 1. Run the server
+## 2. Run the server
 
 ```bash
 cd src/backend
 uv sync --python 3.11
-
-# stdio (what CLI MCP clients register)
 uv run python -m app.mcp_server
-
-# streamable HTTP (for a remote client)
-uv run python -m app.mcp_server --http 8765      # → http://127.0.0.1:8765/mcp
+# or: uv run python -m app.mcp_server --http 8765
 ```
 
-## 2. Register with IBM Bob
-
-Add this to Bob's MCP configuration (or `bob mcp add portflow …`), replacing the path with your clone:
+## 3. Register with IBM Bob
 
 ```json
 {
   "mcpServers": {
-    "portflow": {
+    "portpulse": {
       "command": "uv",
       "args": ["run", "--directory", "<ABSOLUTE-PATH-TO-REPO>/src/backend", "python", "-m", "app.mcp_server"]
     }
@@ -57,65 +31,55 @@ Add this to Bob's MCP configuration (or `bob mcp add portflow …`), replacing t
 }
 ```
 
-A ready-to-edit copy lives at [`src/backend/bob-mcp.config.json`](../../src/backend/bob-mcp.config.json).
-Once registered, Bob discovers the tools listed below automatically.
+Bob then discovers the operational tools automatically.
 
-## 3. Tools Bob can call
+## 4. Tools
 
-| Tool | What it runs | Returns |
-|---|---|---|
-| `get_port_overview` | forecast + hotspot + anomaly + CP-SAT | KPIs, zone status, alerts, hotspots, anomalies |
-| `forecast_congestion(zone)` | LightGBM (+ quantile bands) | 72h index/queue/wait/yard, bands, model card, validation |
-| `rank_hotspots` | risk scorer | ranked hotspots + **binding resource** + confidence |
-| `detect_anomalies` | Isolation Forest | bunching / outage / yard / data-error flags |
-| `optimise_berth_cranes(crane_factor, move_rate_per_crane_hour)` | **OR-Tools CP-SAT** | schedule, metrics, FIFO baseline, deltas, weights |
-| `recommend_routing` | routing rule engine | divert / slow-steam / priority / hold + savings |
-| `generate_operations_plan(include_text)` | plan generator | 12 × 6h shifts (+ printable text) |
-| `simulate_scenario(crane_factor, move_rate_per_crane_hour)` | CP-SAT ×2 | baseline vs scenario impact |
-| `query_vessels(status)` | DB + assignments | vessel queue with current assignment |
-| `get_terminals` | reference + live state | REAL POLB capacity + crane/yard/gate state |
-| `ask_operations_question(question)` | Bob brain | grounded answer + tools executed + mode |
-
-## 4. Resources Bob can read
-
-| URI | Content |
+| Tool | Engine / purpose |
 |---|---|
-| `portflow://overview` | live KPIs / zones / hotspots / anomalies (JSON) |
-| `portflow://terminals` | terminal capacity + live state (JSON) |
-| `portflow://plan` | printable 72h plan (text) |
-| `portflow://forecast/{zone}` | per-zone 72h forecast (JSON) |
+| `get_port_overview` | KPIs, forecasts, hotspots, anomalies and CP-SAT state |
+| `forecast_congestion(zone)` | LightGBM 72h forecast + uncertainty |
+| `rank_hotspots` | composite risk + binding resource |
+| `detect_anomalies` | Isolation Forest disruption flags |
+| `optimise_berth_cranes(...)` | OR-Tools CP-SAT BAP/QCAP + FIFO comparison |
+| `recommend_routing` | routing decision engine |
+| `generate_operations_plan(...)` | 12-shift / 72h plan |
+| `simulate_scenario(...)` | baseline vs stress scenario |
+| `query_vessels(status)` | vessel queue + assignments |
+| `get_terminals` | POLB capacity + live state |
+| `ask_operations_question(question)` | grounded operational assistant |
 
-## 5. Prompts Bob can use
+## 5. Architecture principle
 
-| Prompt | Purpose |
-|---|---|
-| `shift_handover_briefing` | build a supervisor hand-over briefing from the 72h plan |
-| `diversion_decision(vessel)` | walk the divert / slow-steam / hold trade-off for a vessel |
-
-## 6. Verify
-
-```bash
-# tools listed and callable end-to-end (no Bob needed)
-cd src/backend && uv run python - <<'PY'
-import asyncio, json
-from app.mcp_server import mcp
-async def main():
-    print([t.name for t in await mcp.list_tools()])
-    r = await mcp.call_tool("rank_hotspots", {})
-    d = r.structuredContent or json.loads(r.content[0].text)
-    print([(h["zone_code"], h["risk_score"], h["binding_constraint"]) for h in d["ranked"]])
-asyncio.run(main())
-PY
+```text
+Operational data
+      ↓
+LightGBM + Isolation Forest
+      ↓
+Risk / hotspot attribution
+      ↓
+OR-Tools CP-SAT
+      ↓
+Validated berth + crane schedule
+      ↓
+Routing + 72h plan
+      ↓
+IBM Bob via MCP
+      ↓
+Supervisor-facing explanation
 ```
 
-Expected: 11 tools listed, then e.g. `[('Z-LBCT', 38.0, 'CRANE'), ('Z-PCT', 32.3, 'CRANE'), …]`.
+**Bob does not create the berth schedule.** The schedule is produced by the constrained optimizer. Bob chooses tools, reasons over their outputs and communicates the result.
 
-## 7. Notes
+## 6. Verification
 
-- **LLM phrasing.** `ask_operations_question` uses Claude (Anthropic) when `ANTHROPIC_API_KEY` is set;
-  otherwise it answers deterministically from the same engine output. Bob supplies its own LLM, so the
-  other tools return raw engine JSON for Bob to phrase.
-- **Side-effect free.** MCP tools are read-only — they run the engines but do not write runs to the
-  database (the REST API does, when you want persistence).
-- **Requires the database.** Run `uv run python -m app.seed` once first (see
-  [`docs/setup-guide.md`](setup-guide.md)).
+The MCP server exposes 11 operational tools, four resources and two prompts. Tool calls return engine-computed values; the agent is instructed not to invent operational figures.
+
+```bash
+cd src/backend
+uv run python -m pytest -q
+```
+
+## 7. Deterministic fallback
+
+The deterministic fallback is intentionally retained as an availability/safety mechanism, not as another AI provider. It uses the same engine outputs and cannot create a new schedule or operational number.
