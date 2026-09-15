@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from .config import get_settings
 from .db import SessionLocal, ensure_schema
@@ -24,51 +24,54 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         if db.execute(select(func.count()).select_from(Terminal)).scalar() == 0:
-            print("[startup] empty database — seeding (real POLB data + SimPy layer)…")
+            print("[startup] empty database — seeding real POLB reference data + DEMO_AIS simulation layer…")
             from .seed import seed
             seed()
+            db.expire_all()
 
         try:
-            from sqlalchemy import text
-            ais_count = db.execute(text("SELECT COUNT(*) FROM congestion_observation WHERE source='AIS'")).scalar()
-            if ais_count == 0:
-                print("[startup] no AIS data found — generating synthetic AIS history…")
-                from .pipelines.ais_generate import generate_and_load
-                stats = generate_and_load(days=14, seed=20240817)
-                print(f"[startup] AIS pipeline: {stats}")
-        except Exception as _ae:  # noqa: BLE001
-            print(f"[startup] AIS pipeline skipped: {_ae}")
+            ais_count = db.execute(text("SELECT COUNT(*) FROM congestion_observation WHERE source='AIS'")).scalar() or 0
+            demo_count = db.execute(text("SELECT COUNT(*) FROM congestion_observation WHERE source='DEMO_AIS'")).scalar() or 0
+            if ais_count:
+                print(f"[startup] operational dataset: AIS ({ais_count} observations)")
+            elif demo_count:
+                print(f"[startup] operational dataset: DEMO_AIS ({demo_count} observations)")
+            else:
+                print("[startup] warning: no congestion observations available")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[startup] dataset status check skipped: {exc}")
+
+        # Tides are a safety constraint. Prefer NOAA CO-OPS predictions whenever reachable;
+        # otherwise retain the explicitly labelled harmonic model rather than pretending it is observed.
+        try:
+            from .services import tides
+            latest = db.execute(text("SELECT MAX(ts) FROM congestion_observation")).scalar()
+            tide_rows = tides.fetch_noaa_tides(db, horizon_hours=96, t0=latest)
+            if tide_rows:
+                print(f"[startup] tide pipeline: NOAA CO-OPS ({tide_rows} rows)")
+            else:
+                tide_rows = tides.ensure_windows(db, horizon_hours=96, t0=latest)
+                print(f"[startup] tide pipeline: harmonic-model fallback ({tide_rows} rows)")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[startup] tide pipeline unavailable: {exc}")
 
         try:
             from .pipelines.weather import run_weather_pipeline
             n = run_weather_pipeline(db, hours=72)
             if n:
                 print(f"[startup] weather pipeline: {n} rows from Open-Meteo")
-        except Exception as _we:  # noqa: BLE001
-            print(f"[startup] weather pipeline skipped: {_we}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[startup] weather pipeline skipped: {exc}")
     finally:
         db.close()
     yield
 
 
-app = FastAPI(
-    title="PortPulse AI API",
-    version="0.1.0",
-    description=(
-        "PortPulse AI gateway: SimPy simulation, LightGBM forecasting, Isolation Forest anomalies, "
-        "OR-Tools CP-SAT berth/crane optimisation, and IBM Bob agent orchestration."
-    ),
-    lifespan=lifespan,
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=get_settings().cors_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+app = FastAPI(title="PortPulse AI API", version="0.1.0",
+              description="PortPulse AI: forecasting, anomalies, CP-SAT optimisation, routing, and IBM Bob agent orchestration.",
+              lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_list,
+                   allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 for r in ALL_ROUTERS:
     app.include_router(r)
 

@@ -1,22 +1,9 @@
-"""Scenario engine (Module L, W3) — modifies an EngineContext and compares outcomes.
-
-Supported kinds (frozen in the Phase-0 API contract as ``POST /api/scenarios/extended``):
-
-| kind | effect |
-|---|---|
-| `CRANE_OUTAGE` / `PRODUCTIVITY` | crane availability + STS productivity (handled by the optimiser scenario params) |
-| `BERTH_REMOVED` | drop the last `berth_count_delta` berths of `terminal_code` from the plan |
-| `BERTH_ADDED` | add `berth_count_delta` working berths to `terminal_code` |
-| `BUNCHING` | add `bunching_vessels` extra inbound calls in the next few hours |
-| `SCHEDULE_CHANGE` | shift every inbound ETA by `schedule_shift_hours` |
-
-No DB writes here: the context is modified in memory, so a scenario never corrupts
-the shipped dataset. Contradictory parameters are rejected (L req.).
-"""
+"""Scenario engine: validated, isolated, data-versioned what-if contexts."""
 
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 
 from ..services.context import EngineContext
 
@@ -40,66 +27,83 @@ def _validate(body) -> None:
         raise ScenarioError("BUNCHING requires bunching_vessels > 0")
 
 
+def _scenario_version(ctx: EngineContext) -> str:
+    h = hashlib.sha256(ctx.data_version.encode())
+    for v in sorted(ctx.vessels, key=lambda x: x.id):
+        h.update(repr((v.id, v.imo, v.status, v.declared_eta_hours, v.ais_eta_hours,
+                       v.dest_zone_code, v.import_moves, v.export_moves, v.anchored_hours,
+                       v.loa_ft, v.beam_ft, v.draft_ft, v.reefer_units, v.unresolved)).encode())
+    for b in sorted(ctx.berths, key=lambda x: x.id):
+        h.update(repr((b.id, b.length_ft, b.depth_ft, b.cranes_max, b.reach_ft, b.terminal_code)).encode())
+    for code, count in sorted(ctx.cranes.items()):
+        h.update(repr((code, count)).encode())
+    return h.hexdigest()[:20]
+
+
 def modify_context(ctx: EngineContext, body) -> tuple[EngineContext, str]:
-    """Return (scenario context, human-readable description)."""
+    """Return an isolated context whose forecast inputs reflect the requested disruption."""
     _validate(body)
     kind = (body.kind or "").upper()
     terminal = (getattr(body, "terminal_code", None) or "").upper() or None
+    modified = ctx
 
     if kind in ("CRANE_OUTAGE", "PRODUCTIVITY"):
-        return ctx, (f"crane availability {int(body.crane_factor * 100)}% at "
-                     f"{body.move_rate_per_crane_hour} moves/crane-hour")
+        factor = min(1.0, max(0.5, float(getattr(body, "crane_factor", 1.0))))
+        scaled = {code: max(1, round(count * factor)) for code, count in ctx.cranes.items()}
+        modified = replace(ctx, cranes=scaled)
+        description = f"crane availability {factor * 100:.0f}% and {body.move_rate_per_crane_hour:g} moves/crane-hour"
 
-    if kind in ("BERTH_REMOVED", "BERTH_ADDED"):
+    elif kind in ("BERTH_REMOVED", "BERTH_ADDED"):
         term = next((t for t in ctx.terminals if t.code == terminal), None)
         if term is None:
             raise ScenarioError(f"unknown terminal_code {terminal!r}")
-
         target = [b for b in ctx.berths if b.terminal_code == terminal]
         others = [b for b in ctx.berths if b.terminal_code != terminal]
         n = int(body.berth_count_delta)
-
         if kind == "BERTH_REMOVED":
             if n >= len(target):
                 raise ScenarioError(f"cannot remove {n} berths — {terminal} only has {len(target)}")
             kept = target[:-n]
-            desc = f"{n} berth(s) removed at {terminal} ({len(target)} → {len(kept)} working berths)"
+            description = f"{n} berth(s) removed at {terminal} ({len(target)} → {len(kept)} working berths)"
         else:
             if n > len(target):
-                raise ScenarioError(f"cannot add {n} berths from a pool of {len(target)} at {terminal}")
+                raise ScenarioError(f"cannot add {n} berths from the physical reference pool at {terminal}")
             next_id = max((b.id for b in ctx.berths), default=0) + 1
             added = [replace(b, id=next_id + i, name=f"{b.name}+{i + 1}", seq=b.seq + 100 + i)
                      for i, b in enumerate(target[:n])]
             kept = target + added
-            desc = f"{n} berth(s) added at {terminal} ({len(target)} → {len(kept)} working berths)"
+            description = f"{n} scenario berth(s) added at {terminal} ({len(target)} → {len(kept)} working berths)"
+        modified = replace(ctx, berths=kept + others)
 
-        return replace(ctx, berths=kept + others), desc
-
-    if kind == "BUNCHING":
+    elif kind == "BUNCHING":
         n = int(body.bunching_vessels)
         pool = [v for v in ctx.vessels if v.status != "INBOUND"] or ctx.vessels
+        if not pool:
+            raise ScenarioError("BUNCHING requires at least one vessel template")
         next_id = max((v.id for v in ctx.vessels), default=0) + 1
         extra = []
         for i in range(n):
             src = pool[i % len(pool)]
-            extra.append(replace(
-                src, id=next_id + i, name=f"{src.name} [bunch]", status="INBOUND",
-                declared_eta_hours=float(4 + (i * 3) % 20), ais_eta_hours=None, anchored_hours=0.0,
-                anchorage_zone="En route — San Pedro Approach",
-            ))
-        return replace(ctx, vessels=list(ctx.vessels) + extra), \
-            f"{n} extra inbound call(s) bunched into the next ~24h"
+            extra.append(replace(src, id=next_id + i, name=f"{src.name} [bunch {i + 1}]", status="INBOUND",
+                                  declared_eta_hours=float(4 + (i * 3) % 20), ais_eta_hours=None,
+                                  anchored_hours=0.0, anchorage_zone="En route — San Pedro Approach"))
+        modified = replace(ctx, vessels=list(ctx.vessels) + extra)
+        description = f"{n} extra inbound call(s) bunched into the next ~24h"
 
-    # SCHEDULE_CHANGE
-    shift = float(getattr(body, "schedule_shift_hours", -6.0) or -6.0)
-    moved = [replace(v, declared_eta_hours=max(0.5, v.declared_eta_hours + shift),
-                     ais_eta_hours=(None if v.ais_eta_hours is None else max(0.5, v.ais_eta_hours + shift)))
-             if v.status == "INBOUND" else v for v in ctx.vessels]
-    return replace(ctx, vessels=moved), f"all inbound ETAs shifted by {shift:+.1f}h"
+    elif kind == "SCHEDULE_CHANGE":
+        shift = float(getattr(body, "schedule_shift_hours", -6.0) or -6.0)
+        moved = [replace(v,
+                         declared_eta_hours=max(0.5, v.declared_eta_hours + shift),
+                         ais_eta_hours=(None if v.ais_eta_hours is None else max(0.5, v.ais_eta_hours + shift)))
+                 if v.status == "INBOUND" else v for v in ctx.vessels]
+        modified = replace(ctx, vessels=moved)
+        description = f"all inbound ETAs shifted by {shift:+.1f}h"
+
+    modified = replace(modified, data_version=_scenario_version(modified))
+    return modified, description
 
 
 def compare(baseline: dict, scenario: dict) -> dict:
-    """Scenario-minus-baseline deltas (negative average wait = better)."""
     return {
         "serviced": scenario["serviced"] - baseline["serviced"],
         "moves": scenario["total_moves"] - baseline["total_moves"],

@@ -6,153 +6,22 @@ import RoutingTab from "../tabs/Routing";
 import PlanTab from "../tabs/Plan";
 import BobTab from "../tabs/Bob";
 const CongestionPage = React.lazy(() => import("../pages/CongestionPage"));
-const ScenarioPage = React.lazy(() =>
-  import("../features/scenarios").then((m) => ({ default: m.ScenarioPage }))
-);
+const ScenarioPage = React.lazy(() => import("../features/scenarios").then((m) => ({ default: m.ScenarioPage })));
 const QualityPage = React.lazy(() => import("../pages/QualityPage"));
 import { PageContainer } from "../components/layout/PageContainer";
 import { PageHeader } from "../components/layout/PageHeader";
 import { StatusBadge } from "../components/ui/StatusBadge";
 
-export interface TabConfig {
-  id: string;
-  title: string;
-  subtitle: string;
-  breadcrumbs: string[];
-  status?: React.ReactNode;
-  Component: React.ComponentType<{ onNavigateTab?: (tabId: string) => void }>;
-}
+export interface TabConfig { id: string; title: string; subtitle: string; breadcrumbs: string[]; status?: React.ReactNode; Component: React.ComponentType<{ onNavigateTab?: (tabId: string) => void }>; }
 
 export const TABS_REGISTRY: Record<string, TabConfig> = {
-  overview: {
-    id: "overview",
-    title: "Port Operations Overview",
-    subtitle: "Real-time San Pedro Bay KPIs, binding constraints, and Isolation Forest anomaly flags",
-    breadcrumbs: ["Command", "Overview"],
-    status: <StatusBadge status="OPERATIONAL" size="xs" />,
-    Component: () => (
-      <PageContainer>
-        <PageHeader
-          title="San Pedro Bay Operations Cockpit"
-          description="Synthesized 14-day telemetry and 72-hour congestion horizon across Ports of Long Beach & Los Angeles."
-          breadcrumbs={["Command", "Overview"]}
-          status={<StatusBadge status="OPERATIONAL" size="xs" />}
-        />
-        <OverviewTab />
-      </PageContainer>
-    ),
-  },
-  congestion: {
-    id: "congestion",
-    title: "Congestion Intelligence",
-    subtitle: "MapLibre spatiotemporal density, terminal markers, and anchorage queues",
-    breadcrumbs: ["Command", "Congestion"],
-    status: <StatusBadge status="OPERATIONAL" label="Live Heatmap" size="xs" />,
-    Component: CongestionPage,
-  },
-  forecast: {
-    id: "forecast",
-    title: "Congestion Forecast",
-    subtitle: "LightGBM gradient boosted quantile regression (24h / 48h / 72h) with uncertainty bands",
-    breadcrumbs: ["Command", "Forecast"],
-    status: <StatusBadge status="FEASIBLE" label="LightGBM v0.1" size="xs" />,
-    Component: () => (
-      <PageContainer>
-        <PageHeader
-          title="72-Hour Congestion Forecast Engine"
-          description="Zone-level quantile regression (10th/90th percentile bounds) trained on terminal capacity and vessel arrival queues."
-          breadcrumbs={["Command", "Forecast"]}
-          status={<StatusBadge status="FEASIBLE" label="LightGBM v0.1" size="xs" />}
-        />
-        <ForecastTab />
-      </PageContainer>
-    ),
-  },
-  berth: {
-    id: "berth",
-    title: "Berths & Cranes Optimizer",
-    subtitle: "OR-Tools CP-SAT discrete optimization for Berth Allocation (BAP) and Quay Crane Assignment (QCAP)",
-    breadcrumbs: ["Operations", "Berths & Cranes"],
-    status: <StatusBadge status="ASSIGNED" label="CP-SAT Solver" size="xs" />,
-    Component: () => (
-      <PageContainer>
-        <PageHeader
-          title="Berth Allocation & Quay Crane Optimization"
-          description="Solves BAP/QCAP under strict physical bounds (LOA, alongside depth, crane reach) contrasted with a FIFO baseline."
-          breadcrumbs={["Operations", "Berths & Cranes"]}
-          status={<StatusBadge status="ASSIGNED" label="OR-Tools CP-SAT" size="xs" />}
-        />
-        <BerthCranesTab />
-      </PageContainer>
-    ),
-  },
-  routing: {
-    id: "routing",
-    title: "Dynamic Vessel Routing",
-    subtitle: "Alternate routing recommendations: divert, slow-steam, priority window, or hold at anchorage",
-    breadcrumbs: ["Operations", "Routing"],
-    status: <StatusBadge status="WAITING" label="Dynamic" size="xs" />,
-    Component: ({ onNavigateTab }) => (
-      <PageContainer>
-        <PageHeader
-          title="Vessel Routing & Anchorage Diversions"
-          description="Decision-support recommendations calculated against fuel burn rates, port congestion indices, and demurrage risks."
-          breadcrumbs={["Operations", "Routing"]}
-          status={<StatusBadge status="WAITING" label="Dynamic" size="xs" />}
-        />
-        <RoutingTab onNavigateTab={onNavigateTab} />
-      </PageContainer>
-    ),
-  },
-  plan: {
-    id: "plan",
-    title: "72-Hour Operations Plan",
-    subtitle: "12-shift physical operations plan, terminal move rates, crane hours, and action timeline",
-    breadcrumbs: ["Operations", "72-Hour Plan"],
-    status: <StatusBadge status="OPERATIONAL" label="72h Plan" size="xs" />,
-    Component: () => (
-      <PageContainer>
-        <PageHeader
-          title="72-Hour Master Operations Plan"
-          description="Deterministic operational plan synchronized across 13 berths, 62 cranes, and 12 shifts with exportable schedule."
-          breadcrumbs={["Operations", "72-Hour Plan"]}
-          status={<StatusBadge status="OPERATIONAL" label="72h Plan" size="xs" />}
-        />
-        <PlanTab />
-      </PageContainer>
-    ),
-  },
-  scenarios: {
-    id: "scenarios",
-    title: "Scenario Center & Stress Testing",
-    subtitle: "What-if simulation, capacity perturbations, and fleet economic impact (OR-Tools CP-SAT)",
-    breadcrumbs: ["Analysis", "Scenarios"],
-    status: <StatusBadge status="FEASIBLE" label="CP-SAT Solver" size="xs" />,
-    Component: ({ onNavigateTab }) => <ScenarioPage onNavigateTab={onNavigateTab} />,
-  },
-  quality: {
-    id: "quality",
-    title: "Data Quality & Ingestion",
-    subtitle: "Completeness scoring, weather ingestion, and schedule revision audit trail",
-    breadcrumbs: ["Analysis", "Data Quality"],
-    Component: QualityPage,
-  },
-  bob: {
-    id: "bob",
-    title: "Bob AI Assistant",
-    subtitle: "Model Context Protocol (MCP) decision-support agent connected to live engine tools",
-    breadcrumbs: ["AI", "Bob AI"],
-    status: <StatusBadge status="HEALTHY" label="MCP Agent" size="xs" />,
-    Component: () => (
-      <PageContainer>
-        <PageHeader
-          title="Bob — Operations Intelligence Assistant"
-          description="Conversational interface powered by 11 MCP tools that execute real LightGBM, CP-SAT, and routing pipelines on demand."
-          breadcrumbs={["AI", "Bob AI"]}
-          status={<StatusBadge status="HEALTHY" label="MCP Agent" size="xs" />}
-        />
-        <BobTab />
-      </PageContainer>
-    ),
-  },
+  overview: { id: "overview", title: "Port Operations Overview", subtitle: "San Pedro Bay KPIs, binding constraints, and anomaly flags from the current operational dataset", breadcrumbs: ["Command", "Overview"], status: <StatusBadge status="OPERATIONAL" size="xs" />, Component: () => <PageContainer><PageHeader title="San Pedro Bay Operations Cockpit" description="Current operational state and 72-hour congestion horizon across the configured Port of Long Beach container terminals." breadcrumbs={["Command", "Overview"]} status={<StatusBadge status="OPERATIONAL" size="xs" />} /><OverviewTab /></PageContainer> },
+  congestion: { id: "congestion", title: "Congestion Intelligence", subtitle: "MapLibre spatiotemporal density, terminal markers, and data-backed anchorage queues", breadcrumbs: ["Command", "Congestion"], status: <StatusBadge status="OPERATIONAL" label="Heatmap" size="xs" />, Component: CongestionPage },
+  forecast: { id: "forecast", title: "Congestion Forecast", subtitle: "LightGBM 24h / 48h / 72h forecasts with uncertainty bands", breadcrumbs: ["Command", "Forecast"], status: <StatusBadge status="FEASIBLE" label="LightGBM" size="xs" />, Component: () => <PageContainer><PageHeader title="72-Hour Congestion Forecast Engine" description="Zone-level LightGBM forecasts with quantile uncertainty, vessel-arrival pressure, capacity and optional weather features." breadcrumbs={["Command", "Forecast"]} status={<StatusBadge status="FEASIBLE" label="LightGBM" size="xs" />} /><ForecastTab /></PageContainer> },
+  berth: { id: "berth", title: "Berths & Cranes Optimizer", subtitle: "OR-Tools CP-SAT berth allocation and quay-crane assignment", breadcrumbs: ["Operations", "Berths & Cranes"], status: <StatusBadge status="ASSIGNED" label="CP-SAT Solver" size="xs" />, Component: () => <PageContainer><PageHeader title="Berth Allocation & Quay Crane Optimization" description="Solves BAP/QCAP against the loaded berth geometry, draft/UKC, crane outreach, berth non-overlap and terminal crane-pool constraints; contrasted with FIFO." breadcrumbs={["Operations", "Berths & Cranes"]} status={<StatusBadge status="ASSIGNED" label="OR-Tools CP-SAT" size="xs" />} /><BerthCranesTab /></PageContainer> },
+  routing: { id: "routing", title: "Dynamic Vessel Routing", subtitle: "Congestion-aware divert, slow-steam, priority-window, or hold decisions", breadcrumbs: ["Operations", "Routing"], status: <StatusBadge status="WAITING" label="Dynamic" size="xs" />, Component: ({ onNavigateTab }) => <PageContainer><PageHeader title="Vessel Routing & Anchorage Diversions" description="Recommendations are calculated from the current forecast/optimisation state. External-port diversion requires a validated current port-status feed." breadcrumbs={["Operations", "Routing"]} status={<StatusBadge status="WAITING" label="Dynamic" size="xs" />} /><RoutingTab onNavigateTab={onNavigateTab} /></PageContainer> },
+  plan: { id: "plan", title: "72-Hour Operations Plan", subtitle: "12-shift operational plan generated from current forecast, optimisation and routing outputs", breadcrumbs: ["Operations", "72-Hour Plan"], status: <StatusBadge status="OPERATIONAL" label="72h Plan" size="xs" />, Component: () => <PageContainer><PageHeader title="72-Hour Master Operations Plan" description="Deterministic shift plan generated from the current terminal, vessel, forecast, CP-SAT and routing state; terminal counts are read from the active dataset." breadcrumbs={["Operations", "72-Hour Plan"]} status={<StatusBadge status="OPERATIONAL" label="72h Plan" size="xs" />} /><PlanTab /></PageContainer> },
+  scenarios: { id: "scenarios", title: "Scenario Center & Stress Testing", subtitle: "What-if simulation with scenario-specific forecasting and CP-SAT re-optimisation", breadcrumbs: ["Analysis", "Scenarios"], status: <StatusBadge status="FEASIBLE" label="CP-SAT Solver" size="xs" />, Component: ({ onNavigateTab }) => <ScenarioPage onNavigateTab={onNavigateTab} /> },
+  quality: { id: "quality", title: "Data Quality & Ingestion", subtitle: "Provenance, NOAA AIS import, weather ingestion, and schedule validation", breadcrumbs: ["Analysis", "Data Quality"], Component: QualityPage },
+  bob: { id: "bob", title: "Bob AI Assistant", subtitle: "IBM Bob MCP decision-support agent connected to 12 operational tools", breadcrumbs: ["AI", "Bob AI"], Component: () => <PageContainer><PageHeader title="Bob — Operations Intelligence Assistant" description="IBM Bob selects and executes PortFlow SBX MCP tools against the live engine state; deterministic fallback is used only when Bob is unavailable." breadcrumbs={["AI", "Bob AI"]} /><BobTab /></PageContainer> },
 };

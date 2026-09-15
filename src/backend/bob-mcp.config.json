@@ -5,7 +5,7 @@
       "args": [
         "run",
         "--directory",
-        "E:/bob-ai-hackathon-elevatex/src/backend",
+        "${workspaceFolder}/src/backend",
         "python",
         "-m",
         "app.mcp_server"

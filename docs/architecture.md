@@ -1,124 +1,107 @@
-# Architecture — PortFlow SBX
+# Architecture — PortPulse AI
 
-Implementation of the technical plan (`3_Technical_Architecture_and_Build_Plan.md` §1–§3): a **FastAPI**
-gateway over distinct capability services, a **React + Vite** dashboard, **PostgreSQL** persistence, and a
-**SimPy** synthetic operations layer. All code lives under `src/`.
+PortPulse AI uses a FastAPI gateway over distinct capability services, a React + Vite dashboard, PostgreSQL persistence, a SimPy synthetic operations layer, and IBM Bob as the load-bearing agentic orchestrator through MCP.
 
 ## End-to-end flow
 
 ```mermaid
 flowchart TB
-    subgraph DATA["Data & synthetic operations layer"]
-        REF["REAL POLB terminal table<br/>(berths / cranes / yard / gate)"]
-        SIM["SimPy discrete-event simulation<br/>vessel calls + ETA revisions + hourly congestion"]
-        AIS["NOAA AccessAIS batch pipeline<br/>(optional real AIS → congestion series)"]
-        WX["Open-Meteo weather (batch)"]
+    subgraph DATA["Data & operations layer"]
+        REF["REAL POLB reference table<br/>berths / cranes / yard / gate"]
+        SIM["SimPy discrete-event simulation<br/>vessel calls + ETA revisions + congestion"]
+        AIS["NOAA AccessAIS import<br/>optional real AIS → congestion series"]
+        WX["Open-Meteo weather"]
     end
 
     DB[("PostgreSQL<br/>SQLAlchemy 2 + psycopg3")]
 
-    subgraph SVC["FastAPI capability services (behind one gateway)"]
-        CTX["context.py<br/>EngineContext (one t0)"]
-        FC["forecasting.py<br/>LightGBM + quantile bands"]
-        AN["anomaly.py<br/>Isolation Forest"]
-        HS["hotspot.py<br/>risk score + binding resource"]
-        OPT["optimiser.py<br/>OR-Tools CP-SAT (BAP/QCAP)"]
-        RT["routing.py<br/>divert / slow-steam / priority / hold"]
-        PL["plan.py<br/>12 × 6h shifts"]
-        BOB["bob.py + llm.py<br/>grounded Claude narrative"]
-        PIPE["pipeline.py<br/>orchestration + persistence"]
+    subgraph ENG["PortPulse capability engines"]
+        CTX["EngineContext<br/>single t0 + data fingerprint"]
+        FC["LightGBM<br/>72h forecast + quantiles"]
+        AN["Isolation Forest<br/>anomaly detection"]
+        HS["Risk / hotspot scorer<br/>binding resource"]
+        OPT["OR-Tools CP-SAT<br/>BAP / QCAP + FIFO"]
+        RT["Routing engine<br/>divert / slow-steam / priority / hold"]
+        PL["72h operations planner<br/>12 × 6h shifts"]
     end
 
+    MCP["MCP server<br/>12 tools · 4 resources · 3 prompts"]
+    BOB["IBM Bob<br/>agent / orchestrator"]
     UI["React + Vite dashboard<br/>Overview · Forecast · Berth & Cranes · Routing · 72-Hr Plan · Bob AI"]
 
     REF --> DB
     SIM --> DB
     AIS --> DB
     WX -.-> FC
-    DB --> CTX --> FC
-    CTX --> AN --> HS
+    DB --> CTX
+    CTX --> FC
+    CTX --> AN
     FC --> HS
-    FC --> OPT --> RT --> PL
-    CTX --> PIPE
-    FC --> PIPE
-    AN --> PIPE
-    HS --> PIPE
-    OPT --> PIPE
-    RT --> PIPE
-    PL --> PIPE
-    PIPE --> BOB
-    BOB -->|Claude| LLM["Anthropic Claude<br/>(phrasing only)"]
-    PIPE --> API["/api/* (FastAPI routers)"]
-    API --> UI
-    PIPE --> MCP["app/mcp_server.py<br/>MCP tools · resources · prompts"]
-    MCP --> BOBAGENT["IBM Bob (MCP client)"]
+    AN --> HS
+    CTX --> OPT
+    FC --> OPT
+    OPT --> RT
+    RT --> PL
+    CTX --> PL
+    FC --> PL
+    HS --> PL
+    OPT --> PL
+    ENG --> MCP
+    MCP <--> BOB
+    ENG --> UI
+    MCP --> UI
 ```
 
-**Data flow in words.** `seed.py` loads the REAL POLB terminal/berth/crane/yard/gate reference tables, then
-runs the **SimPy** simulation to generate the vessel queue, ETA-revision history and the 14-day hourly
-congestion series (`source="SIM"`). On first startup `main.py` auto-runs the **AIS generation pipeline**
-(`pipelines/ais_generate.py`) which produces a realistic NOAA AccessAIS-format CSV and loads it as
-`source="AIS"`, replacing the SimPy seed rows. `context.py` loads everything into one `EngineContext` with a
-single model time `t0`. `forecasting.py` trains a **LightGBM** model per zone (point + quantile 0.1/0.9)
-and rolls it out 72 h. `anomaly.py` runs an **Isolation Forest** per zone. `hotspot.py` computes the
-composite risk score and names the binding resource. `optimiser.py` solves the berth-allocation +
-quay-crane-assignment problem with **OR-Tools CP-SAT** and also computes a FIFO baseline.
-`routing.py` turns forecast waits into diver/slow-steam/priority/hold recommendations. `plan.py` fuses
-everything into 12 × 6 h shifts. `pipeline.py` orchestrates and persists; the API routers expose it; the
-React dashboard consumes it.
+## Data flow
+
+The default offline path seeds the REAL Port of Long Beach terminal/berth/crane/yard/gate reference data and a reproducible **SimPy synthetic operations layer**. Synthetic congestion observations are labelled `DEMO_AIS` and are never presented as measured AIS. A separate `POST /api/ais/import` path accepts a real NOAA AccessAIS export and labels its resulting observations `AIS`.
+
+`context.py` loads the operational state into one `EngineContext` with a shared model time `t0` and a data fingerprint. LightGBM forecasts 72 hours with uncertainty bands; Isolation Forest detects anomalies; hotspot scoring attributes a binding resource; OR-Tools CP-SAT solves berth allocation and quay-crane assignment and computes a FIFO baseline; routing converts predicted pressure into vessel actions; and the planner produces a 12-shift operating plan. `pipeline.py` orchestrates these engines, persists outputs and invalidates caches when operational inputs change.
 
 ## Component table
 
-| File | Responsibility | Tech |
+| Component | Responsibility | Technology |
 |---|---|---|
-| `backend/app/main.py` | FastAPI gateway, CORS, lifespan (auto-seed) | FastAPI |
-| `backend/app/routers/*` | one router per capability behind the gateway | FastAPI |
-| `backend/app/models.py` | full data model (spec §18 entity flow) | SQLAlchemy 2 |
-| `backend/app/reference.py` | REAL POLB terminals + documented constants | — |
-| `backend/app/seed.py` | reference seed + SimPy layer | SQLAlchemy + SimPy |
-| `backend/app/services/simulation.py` | synthetic berth/crane/yard/gate operations | **SimPy** |
-| `backend/app/services/forecasting.py` | congestion forecast + uncertainty bands | **LightGBM** |
-| `backend/app/services/anomaly.py` | disruption / data-error detection | **scikit-learn IsolationForest** |
-| `backend/app/services/hotspot.py` | risk score w1..w5 + binding constraint | deterministic |
-| `backend/app/services/optimiser.py` | BAP/QCAP + FIFO baseline | **OR-Tools CP-SAT** |
-| `backend/app/services/routing.py` | divert / slow-steam / priority / hold | rule engine |
-| `backend/app/services/plan.py` | 12 × 6h plan (JSON + text) | — |
-| `backend/app/services/llm.py` | plan narrative + grounded Q&A | **Anthropic Claude** |
-| `backend/app/services/bob.py` | Bob brain (engines → grounded answer); shared by API + MCP | — |
-| `backend/app/mcp_server.py` | MCP server: 11 tools + resources + prompts | **MCP (Model Context Protocol)** |
-| `backend/app/services/context.py` | DB → EngineContext (one t0) | SQLAlchemy |
-| `backend/app/services/pipeline.py` | orchestration + run persistence + caching | — |
-| `frontend/src/App.tsx` | 6-tab dashboard | **React + Vite + Tailwind + Recharts** |
-| `frontend/src/api.ts` | typed fetch client | — |
+| `backend/app/main.py` | FastAPI gateway, startup seed and provenance checks | FastAPI |
+| `backend/app/reference.py` | REAL POLB terminal/reference facts | Python |
+| `backend/app/seed.py` | reference seed + synthetic operations | SQLAlchemy + SimPy |
+| `backend/app/services/context.py` | unified engine state + data fingerprint | SQLAlchemy |
+| `backend/app/services/forecasting.py` | 72h congestion forecast + uncertainty | LightGBM |
+| `backend/app/services/anomaly.py` | disruption/data-error flags | scikit-learn IsolationForest |
+| `backend/app/services/hotspot.py` | risk ranking + binding resource | deterministic scorer |
+| `backend/app/services/optimiser.py` | BAP/QCAP + FIFO baseline | OR-Tools CP-SAT |
+| `backend/app/services/routing.py` | vessel routing actions | rule engine |
+| `backend/app/services/plan.py` | 12 × 6h operations plan | Python |
+| `backend/app/services/bob_agent.py` | invokes the real IBM Bob CLI | IBM Bob |
+| `backend/app/mcp_server.py` | operational tools, resources and prompts | MCP |
+| `backend/app/services/llm.py` | Bob-first provider resolution + deterministic fallback | Python |
+| `frontend/` | supervisor dashboard and Bob surface | React + Vite + Tailwind + Recharts |
 
-## Data model (PostgreSQL / SQLAlchemy)
+## Bob integration — load-bearing
 
-`Terminal → Berth / Crane / YardZone / Gate → VesselCall (+EtaRevision) → CongestionObservation →
-ForecastRun (+ForecastPoint) → HotspotFlag / AnomalyFlag → OptimiserRun (+Assignment) /
-RoutingRecommendation → OperationsPlan → Scenario → ImpactAssessment (+ChatMessage)`.
+IBM Bob is the **agent/orchestrator**, while the deterministic domain engines remain responsible for operational computation.
 
-`Terminal`/`Berth` capacity columns are REAL POLB fact-sheet figures; `VesselCall` and
-`CongestionObservation` rows are generated by the AIS pipeline (`source="AIS"`) on startup — replaceable
-by a genuine AccessAIS CSV drop-in via `POST /api/ais/generate` or the Quality page.
+1. **Bob → PortPulse:** Bob acts as the MCP client and calls the relevant operational tools. The MCP server exposes 12 tools covering overview, forecasting, hotspots, anomalies, berth/crane optimisation, routing, operations planning, scenarios, vessel queries, terminals, provenance and grounded operations questions.
+2. **Tools → engines:** each MCP tool executes the corresponding PortPulse engine and returns structured results. Bob is instructed to use tools before stating operational figures and never invent metrics.
+3. **Bob → supervisor:** Bob synthesizes the tool results into an explanation and decision, with tool-call metadata returned to the application.
+4. **Application → Bob:** `/api/bob` launches the real IBM Bob agent through `services/bob_agent.py`; the agent uses the same MCP server. Plan narration also uses Bob when available.
+5. **Fallback:** if Bob is unavailable, the application returns a deterministic briefing generated from the same engine outputs. There is **no secondary external LLM provider**.
 
-## Bob integration (load-bearing) — two directions, one brain
+The project-level `.bob/mcp.json`, `.bob/rules/portpulse-operations.md` and `.bob/skills/port-operations-response/SKILL.md` provide persistent Bob workspace context and a reusable port-operations response workflow.
 
-`services/bob.py` is the shared brain; `services/bob_agent.py` makes **IBM Bob itself** the narrative
-engine. `services/llm.py` resolves the provider (`LLM_PROVIDER=auto|bob|claude|deterministic`).
+## Security and operational notes
 
-1. **Bob → our engines (MCP).** Bob registers `app/mcp_server.py` and calls 11 engine tools
-   (`forecast_congestion`, `rank_hotspots`, `optimise_berth_cranes`, `recommend_routing`,
-   `generate_operations_plan`, `simulate_scenario`, …), reads 4 resources and uses 2 prompts. Each call
-   actually runs LightGBM / OR-Tools CP-SAT / routing.
-2. **Our app → Bob.** `POST /api/bob` and the 72h plan narrative run the **real Bob agent**
-   (`bob run --format stream-json`); Bob fetches the data with the MCP tools above and answers from it.
-   Every reply reports `provider` (`bob` \| `claude` \| `deterministic`) and the `actions` (MCP tool
-   names) Bob executed, e.g.
-   `provider=bob · mode=llm · actions=['mcp__portflow__rank_hotspots']`.
+- API keys are read from environment variables and are not stored in source code.
+- The Bob CLI workspace configuration is portable and does not contain machine-specific absolute paths.
+- `--trust` is used only where the Bob CLI runtime requires trusted workspace execution for the demo; production deployment should apply least-privilege workspace and MCP permissions.
+- MCP tool descriptions explicitly distinguish synthetic `DEMO_AIS` from real imported `AIS` data.
+- In-memory caches improve interactive latency but are not a distributed production cache.
 
-Recursion guard: the Bob child inherits `PORTFLOW_NO_BOB_AGENT=1`, so the MCP server's
-`ask_operations_question` never re-enters Bob. Without a key the answer falls back to Claude, then to a
-deterministic template over the **same engine numbers**. Registration + tool catalogue: [`bob-mcp.md`](bob-mcp.md).
+## Data model
+
+`Terminal → Berth / Crane / YardZone / Gate → VesselCall (+EtaRevision) → CongestionObservation → ForecastRun (+ForecastPoint) → HotspotFlag / AnomalyFlag → OptimiserRun (+Assignment) / RoutingRecommendation → OperationsPlan → Scenario → ImpactAssessment (+ChatMessage)`.
+
+Terminal and berth capacity values come from the documented POLB reference table. Operational history is synthetic `DEMO_AIS` by default and replaceable with real NOAA AccessAIS history.
 
 ## Mapping to the hackathon template
 
@@ -127,8 +110,7 @@ deterministic template over the **same engine numbers**. Registration + tool cat
 | `src/forecasting/` | `src/backend/app/services/forecasting.py` |
 | `src/optimiser/` | `src/backend/app/services/optimiser.py` |
 | `src/routing/` | `src/backend/app/services/routing.py` |
-| `src/bob_integration/` | `src/backend/app/routers/bob.py` + `src/backend/app/services/llm.py` |
-| `src/data/` | `src/backend/app/reference.py` + `seed.py` + `simulation.py` + AIS pipeline |
-| `src/.env.example` / `src/README.md` | `src/backend/.env.example` / `src/README.md` |
-| `docs/` | problem-statement · solution-overview · architecture (this) · setup-guide |
+| `src/bob_integration/` | `src/backend/app/routers/bob.py` + `src/backend/app/services/bob_agent.py` |
+| `src/data/` | `src/backend/app/reference.py` + `seed.py` + simulation + AIS pipeline |
+| `docs/` | problem · solution · architecture · setup |
 | `demo/`, `presentation/`, `submission.yaml` | repo root |

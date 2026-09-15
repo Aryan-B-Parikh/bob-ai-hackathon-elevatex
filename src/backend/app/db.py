@@ -10,7 +10,6 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from .config import get_settings
 
 settings = get_settings()
-
 engine = create_engine(settings.database_url, echo=settings.db_echo, pool_pre_ping=True, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False, future=True)
 
@@ -20,7 +19,6 @@ class Base(DeclarativeBase):
 
 
 def get_db() -> Iterator[Session]:
-    """FastAPI dependency yielding a session."""
     db = SessionLocal()
     try:
         yield db
@@ -29,14 +27,12 @@ def get_db() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """Create all tables (idempotent). Used by the seed script and on startup."""
-    from . import models  # noqa: F401  (register mappers)
+    """Create all application tables, including the real-AIS track store."""
+    from . import ais_track_model, models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
 
 
-# Phase 0 interface freeze: additive columns on pre-existing tables (Postgres
-# `ADD COLUMN IF NOT EXISTS` keeps data; `create_all` only creates new tables).
 _NEW_COLUMNS = [
     "ALTER TABLE vessel_call ADD COLUMN IF NOT EXISTS voyage_number VARCHAR(40)",
     "ALTER TABLE vessel_call ADD COLUMN IF NOT EXISTS normalised JSONB",
@@ -50,7 +46,7 @@ _NEW_COLUMNS = [
 
 
 def ensure_schema() -> None:
-    """Create new tables and add the frozen Phase-0 columns (idempotent, non-destructive)."""
+    """Create new tables and add frozen additive columns idempotently."""
     from sqlalchemy import text
 
     init_db()
@@ -60,6 +56,6 @@ def ensure_schema() -> None:
 
 
 def drop_all() -> None:
-    from . import models  # noqa: F401
+    from . import ais_track_model, models  # noqa: F401
 
     Base.metadata.drop_all(bind=engine)
