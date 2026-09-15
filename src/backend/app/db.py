@@ -28,8 +28,8 @@ def get_db() -> Iterator[Session]:
 
 def init_db() -> None:
     """Create all application tables, including the real-AIS track store."""
-    from . import models  # noqa: F401
-    from . import ais_track_model  # noqa: F401
+    from . import ais_track_model, models  # noqa: F401
+
     Base.metadata.create_all(bind=engine)
 
 
@@ -48,6 +48,7 @@ _NEW_COLUMNS = [
 def ensure_schema() -> None:
     """Create new tables and add frozen additive columns idempotently."""
     from sqlalchemy import text
+
     init_db()
     with engine.begin() as conn:
         for stmt in _NEW_COLUMNS:
@@ -55,6 +56,6 @@ def ensure_schema() -> None:
 
 
 def drop_all() -> None:
-    from . import models  # noqa: F401
-    from . import ais_track_model  # noqa: F401
+    from . import ais_track_model, models  # noqa: F401
+
     Base.metadata.drop_all(bind=engine)
