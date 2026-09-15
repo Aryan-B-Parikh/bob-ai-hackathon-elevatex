@@ -45,14 +45,15 @@ _BBOX_LON = (-118.45, -118.05)
 
 # ── Per-zone anchor targets (centred on each terminal's documented position) ──
 # Each entry: (zone_code, lat_ctr, lon_ctr, lat_spread, lon_spread, weight)
-# Spread chosen so jitter stays within the ANCHORAGE_RECTS in ais.py and the
-# nearest-neighbour assignment in _zone_for() reliably routes each vessel to the
-# correct zone.  Weights reflect approximate berth capacity share.
+# Spread MUST be < half the distance to the nearest neighbour terminal so that
+# nearest-neighbour zone assignment in _zone_for() is always correct.
+# Closest pair is Z-ITS <-> Z-TTI at 0.0122 deg  =>  safe spread = 0.0061 deg.
+# Using 0.005 gives a comfortable margin across all pairs.
 _ANCHORAGES = [
-    ("Z-LBCT", 33.750, -118.217, 0.015, 0.015, 3),
-    ("Z-ITS",  33.746, -118.203, 0.012, 0.012, 3),
-    ("Z-PCT",  33.741, -118.181, 0.012, 0.012, 2),
-    ("Z-TTI",  33.736, -118.210, 0.012, 0.012, 2),
+    ("Z-LBCT", 33.750, -118.217, 0.005, 0.005, 3),
+    ("Z-ITS",  33.746, -118.203, 0.005, 0.005, 3),
+    ("Z-PCT",  33.741, -118.181, 0.005, 0.005, 2),
+    ("Z-TTI",  33.736, -118.210, 0.005, 0.005, 2),
 ]
 
 # ── Approach waypoints (outside the bbox, 30-50 nm out) ───────────────────────
@@ -223,7 +224,7 @@ def _generate_vessel_track(
 def generate_ais_csv(
     days: int = 14,
     seed: int = 20240817,
-    arrivals_per_day: float = 5.2,   # tuned to POLB typical throughput (~1,900 vessels/year)
+    arrivals_per_day: float = 8.0,   # ~2,900/year — ensures all zones covered in every hour window
 ) -> str:
     """Generate a full NOAA AccessAIS-format CSV string for San Pedro Bay.
 
@@ -262,6 +263,17 @@ def generate_ais_csv(
         bunch_t = now - timedelta(hours=144 - k * 4)
         vc_ulcv = next(c for c in _CLASSES if c["cls"] == "ULCV")
         records = _generate_vessel_track(rng, bunch_t, rng.uniform(24, 48), vc_ulcv)
+        all_records.extend(records)
+
+    # Pin one currently-anchored vessel per zone so hours_ago=0 is never zero
+    # across any terminal.  Each vessel arrived 6–18h ago with a long dwell,
+    # guaranteeing it is still present at the snapshot moment (now).
+    for anchor_entry in _ANCHORAGES:
+        zone_code, lat_ctr, lon_ctr, dlat, dlon, _ = anchor_entry
+        arrive_t = now - timedelta(hours=rng.uniform(6, 18))
+        dwell    = rng.uniform(36, 96)          # well past now
+        vc       = _pick_class(rng)
+        records  = _generate_vessel_track(rng, arrive_t, dwell, vc)
         all_records.extend(records)
 
     # Sort by timestamp
