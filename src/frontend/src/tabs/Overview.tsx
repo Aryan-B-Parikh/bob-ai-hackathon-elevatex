@@ -9,7 +9,7 @@ export default function Overview() {
   const k = data.kpis;
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3">
         <Kpi label="Index now" value={k.port_index_now} tone="var(--accent)" />
         <Kpi label="72h peak" value={k.peak_forecast_index} sub={`at +${k.peak_forecast_hour}h`} tone="var(--warn)" />
         <Kpi label="At anchor" value={k.vessels_at_anchor} sub={`${k.vessels_inbound} inbound`} />
@@ -22,9 +22,9 @@ export default function Overview() {
       </div>
 
       <Card>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold">Zone congestion — forecast peak &amp; binding resource</h3>
-          <span className="muted text-xs">{data.dataset.source}</span>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h3 className="font-semibold text-sm sm:text-base">Zone congestion — forecast peak &amp; binding resource</h3>
+          <span className="muted text-xs font-mono">{data.dataset.source}</span>
         </div>
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
           {data.zones.map((z: any) => {
@@ -35,16 +35,16 @@ export default function Overview() {
                   <div className="font-medium">{z.label}</div>
                   <Level level={z.level} />
                 </div>
-                <div className="mt-2 flex items-end justify-between">
+                <div className="mt-2 flex items-end justify-between gap-2">
                   <div>
-                    <div className="text-xl font-semibold accent">{z.peak_index}</div>
+                    <div className="text-xl font-semibold accent font-mono">{z.peak_index}</div>
                     <div className="muted text-xs">peak @ +{z.peak_hour}h · now {z.current_index}</div>
                     <div className="muted text-xs">q {z.queue_now} · wait {z.wait_now}h · yard {z.yard_util_pct}%</div>
                   </div>
                   <Sparkline data={z.recent_index} />
                 </div>
                 {h && (
-                  <div className="muted text-xs mt-2">
+                  <div className="muted text-xs mt-2 pt-2 border-t border-[var(--border-subtle)]">
                     risk {h.risk_score}/100 · binding <b className="accent">{h.binding_constraint}</b> · conf {h.confidence}
                   </div>
                 )}
@@ -65,23 +65,30 @@ export default function Overview() {
                 <div className="muted text-xs mt-1">{a.detail}</div>
               </li>
             ))}
-            {!data.alerts.length && <li className="muted text-sm">No active alerts.</li>}
+            {!data.alerts.length && <li className="muted text-sm py-4 text-center">No active alerts detected.</li>}
           </ul>
         </Card>
         <Card>
           <h3 className="font-semibold mb-2">Anomaly detection (Isolation Forest)</h3>
-          <table>
-            <thead><tr><th>Zone</th><th>Kind</th><th>Score</th><th>Flagged</th><th>n</th></tr></thead>
-            <tbody>
-              {data.anomalies.map((a: any) => (
-                <tr key={a.zone_code}>
-                  <td>{a.zone_code}</td><td>{a.kind}</td><td className="mono">{a.score}</td>
-                  <td>{a.is_anomaly ? <span style={{ color: "var(--bad)" }}>yes</span> : <span className="muted">no</span>}</td>
-                  <td className="muted">{a.sample_size}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[360px]">
+              <thead><tr><th>Zone</th><th>Kind</th><th>Score</th><th>Flagged</th><th>n</th></tr></thead>
+              <tbody>
+                {data.anomalies.map((a: any) => (
+                  <tr key={a.zone_code}>
+                    <td>{a.zone_code}</td><td>{a.kind}</td><td className="mono">{a.score}</td>
+                    <td>{a.is_anomaly ? <span style={{ color: "var(--bad)" }}>yes</span> : <span className="muted">no</span>}</td>
+                    <td className="muted">{a.sample_size}</td>
+                  </tr>
+                ))}
+                {!data.anomalies.length && (
+                  <tr>
+                    <td colSpan={5} className="muted text-center py-4">No spatial anomalies flagged.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </Card>
       </div>
     </div>

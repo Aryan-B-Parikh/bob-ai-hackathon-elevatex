@@ -10,7 +10,7 @@ export default function Plan() {
   const conf = s.confidence_by_bucket ?? {};
   return (
     <div className="space-y-4">
-      <div className="grid md:grid-cols-4 xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3">
         <Kpi label="Risk" value={s.risk_level} tone={s.risk_level === "SEVERE" ? "var(--bad)" : "var(--warn)"} />
         <Kpi label="Arrivals" value={s.total_arrivals} />
         <Kpi label="Berthings" value={s.total_berthings} />
@@ -19,7 +19,7 @@ export default function Plan() {
         <Kpi label="Deferred" value={s.deferred_count} />
       </div>
       <Card>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-semibold">Top actions</h3>
           <a className="chip accent" href={api.exportUrl("assignments")} target="_blank" rel="noreferrer">Export assignments CSV</a>
         </div>
