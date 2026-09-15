@@ -1,9 +1,4 @@
-"""AIS ingestion and provenance management.
-
-POST /api/ais/import accepts a real NOAA AccessAIS export and stores source=AIS.
-POST /api/ais/generate creates synthetic NOAA-shaped DEMO_AIS data for offline demos.
-The synthetic path never masquerades as measured AIS.
-"""
+"""AIS ingestion and provenance management."""
 
 from __future__ import annotations
 
@@ -14,6 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..ais_track_model import AISTrack
 from ..db import get_db
 from ..models import CongestionObservation
 
@@ -24,19 +20,23 @@ _MAX_BYTES = 50 * 1024 * 1024
 @router.get("/status")
 def ais_status(db: Session = Depends(get_db)):
     total = db.execute(select(func.count()).select_from(CongestionObservation)).scalar() or 0
+    tracks = db.execute(select(func.count()).select_from(AISTrack)).scalar() or 0
     if total == 0:
-        return {"source": "EMPTY", "rows": 0, "zones": 0, "newest_ts": None, "oldest_ts": None, "stub": False}
-    row = db.execute(select(CongestionObservation.source, func.count().label("n"), func.max(CongestionObservation.ts).label("newest"), func.min(CongestionObservation.ts).label("oldest"))
-                     .group_by(CongestionObservation.source).order_by(func.count().desc())).first()
+        return {"source": "EMPTY", "rows": 0, "zones": 0, "track_points": tracks, "newest_ts": None, "oldest_ts": None, "stub": False}
+    row = db.execute(
+        select(CongestionObservation.source, func.count().label("n"),
+               func.max(CongestionObservation.ts).label("newest"), func.min(CongestionObservation.ts).label("oldest"))
+        .group_by(CongestionObservation.source).order_by(func.count().desc())
+    ).first()
     zones = db.execute(select(func.count(CongestionObservation.zone_code.distinct()))).scalar() or 0
     return {"source": row.source if row else "UNKNOWN", "rows": row.n if row else total, "zones": zones,
-            "newest_ts": row.newest.isoformat() if row and row.newest else None,
+            "track_points": tracks, "newest_ts": row.newest.isoformat() if row and row.newest else None,
             "oldest_ts": row.oldest.isoformat() if row and row.oldest else None, "stub": False}
 
 
 @router.post("/import")
 async def ais_import(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Import a real NOAA AccessAIS CSV; resulting observations are source=AIS."""
+    """Import a real NOAA AccessAIS CSV, aggregate it, and retain filtered track points."""
     raw = await file.read()
     if len(raw) > _MAX_BYTES:
         raise HTTPException(status_code=413, detail="AIS file too large: maximum 50 MB")
@@ -48,10 +48,14 @@ async def ais_import(file: UploadFile = File(...), db: Session = Depends(get_db)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as series_f:
             series_path = series_f.name
         build_stats = ais_pipeline.build(raw_path, series_path, min_anchor_min=5.0, sog_max=1.0)
-        import_stats = ais_pipeline.import_series(series_path)
+        dataset_id = f"NOAA-{Path(file.filename or 'AIS').stem}-{build_stats['vessels']}-{build_stats['output_rows']}"
+        track_stats = ais_pipeline.persist_tracks(raw_path, dataset_id=dataset_id, sog_max=1.0)
+        import_stats = ais_pipeline.import_series(series_path, source="AIS", is_measured=True)
         db.expire_all()
-        return {"status": "ok", "source": "AIS", "message": "NOAA AccessAIS observations imported", "build": build_stats, "import": import_stats, "stub": False}
-    except SystemExit as exc:
+        return {"status": "ok", "source": "AIS", "dataset_id": dataset_id,
+                "message": "NOAA AccessAIS observations and filtered tracks imported",
+                "build": build_stats, "tracks": track_stats, "import": import_stats, "stub": False}
+    except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"AIS import failed: {exc}") from exc
