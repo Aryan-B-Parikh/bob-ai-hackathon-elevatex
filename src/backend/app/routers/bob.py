@@ -1,40 +1,24 @@
 """Bob router — thin wrapper over the shared IBM Bob service."""
-
 from __future__ import annotations
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
 from ..config import get_settings
 from ..db import get_db
 from ..models import ChatMessage
 from ..services import bob as bob_svc
 from ..services import bob_agent, llm
-
 router = APIRouter(prefix="/api", tags=["bob"])
-
-
-class BobBody(BaseModel):
-    message: str
-
-
+class BobBody(BaseModel): message: str
 @router.get("/bob/status")
 def status():
     settings = get_settings()
-    return {"provider": llm.provider(), "configured": bool(settings.bob_api_key),
-            "cli_available": bob_agent._cli_path() is not None, "mcp": "PortFlow SBX",
-            "tools": 11, "fallback": "deterministic engine-grounded"}
-
-
+    return {"provider": llm.provider(), "configured": bool(settings.bob_api_key), "cli_available": bob_agent._cli_path() is not None, "mcp": "PortFlow SBX", "tools": 12, "fallback": "deterministic engine-grounded"}
 @router.get("/bob")
 def history(db: Session = Depends(get_db)):
     rows = db.execute(select(ChatMessage).order_by(ChatMessage.id.desc()).limit(50)).scalars().all()
-    return {"messages": [{"role": r.role, "content": r.content, "meta": r.meta,
-                          "created_at": r.created_at.isoformat()} for r in reversed(rows)]}
-
-
+    return {"messages": [{"role": r.role, "content": r.content, "meta": r.meta, "created_at": r.created_at.isoformat()} for r in reversed(rows)]}
 @router.post("/bob")
 def ask(body: BobBody, db: Session = Depends(get_db)):
     out = bob_svc.respond(db, body.message, persist=True)
