@@ -137,10 +137,10 @@ npm run dev
 
 | Artifact | Location |
 |---|---|
-| 📹 Demo Video | [`demo/demo-video-link.txt`](demo/demo-video-link.txt) — to be replaced with the hosted recording before submission |
+| 📹 Demo Video | [`demo/demo-video-link.txt`](demo/demo-video-link.txt) |
 | 🌐 Live Demo | [`demo/live-demo-url.txt`](demo/live-demo-url.txt) |
 | 🖼️ Screenshots | [`demo/screenshots/`](demo/screenshots/) |
-| 📊 Presentation | [`presentation/slides.pdf`](presentation/slides.pdf) |
+| 📊 Presentation | [`presentation/portpulse_ai.pdf`](presentation/portpulse_ai.pdf) |
 
 ---
 
