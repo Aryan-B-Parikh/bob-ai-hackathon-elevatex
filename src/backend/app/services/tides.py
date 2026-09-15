@@ -112,3 +112,9 @@ def is_open(berth_id: int, design_depth_ft: float, draft_ft: float, hour: int) -
 
 def allowed_start_hours(berth_id: int, design_depth_ft: float, draft_ft: float, horizon_hours: int) -> list[int]:
     return [h for h in range(horizon_hours + 1) if is_open(berth_id, design_depth_ft, draft_ft, h)]
+
+
+def snapshot(berth_id: int, design_depth_ft: float, horizon_hours: int) -> list[dict]:
+    """Return [{hour, depth_ft}] for hours 0..horizon_hours inclusive (used by the tides UI curve)."""
+    return [{"hour": h, "depth_ft": round(depth_at(berth_id, design_depth_ft, h), 3)}
+            for h in range(horizon_hours + 1)]

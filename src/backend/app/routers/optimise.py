@@ -102,7 +102,7 @@ def get_tides(hours: int = Query(72, ge=24, le=168), db: Session = Depends(get_d
     return {
         "period_hours": tides.TIDE_PERIOD_H,
         "amplitude_ft": tides.TIDE_AMPLITUDE_FT,
-        "under_keel_margin_ft": tides.UNDER_KEEL_MARGIN_FT,
+        "under_keel_margin_ft": get_settings().under_keel_margin_ft,
         "source": source,
         "noaa_rows_written": noaa_written,
         "berths": [
