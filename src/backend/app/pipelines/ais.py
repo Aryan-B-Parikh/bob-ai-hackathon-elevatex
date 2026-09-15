@@ -1,24 +1,9 @@
 """NOAA AccessAIS → per-zone hourly congestion series → PostgreSQL.
 
-The real-data path (plan §3: "batch-load a real AIS window"). Two steps:
-
-    # 1) AccessAIS CSV  ->  congestion series CSV
-    uv run python -m app.pipelines.ais build <ais_export.csv> congestion-series.csv [--min-anchor-min 0] [--sog-max 1.0]
-
-    # 2) congestion series CSV  ->  CongestionObservation table (source="AIS")
-    uv run python -m app.pipelines.ais import congestion-series.csv
-
-Source: NOAA Office for Coastal Management — AccessAIS (Marine Cadastre),
-https://marinecadastre.gov/accessais/  ("clip and ship" a San Pedro Bay window).
-
-Method & documented approximations
-----------------------------------
-1. bounding box  : lat 33.55–33.85, lon −118.45…−118.05
-2. at-anchor     : SOG < sog_max  AND inside one of the documented anchorage rectangles
-3. per-MMSI dwell: last anchored timestamp − first anchored timestamp (interval approximation,
-                   no interpolation across AIS gaps; a vessel counts toward every hour in between)
-4. zone          : nearest terminal anchor point from the vessel's mean anchored position
-5. hourly index  : identical formula to the engine  clamp(60·(queue/20) + 40·(wait/72), 0, 100)
+The real-data path converts a NOAA AccessAIS CSV into the same congestion-series
+schema used by the offline demo. Import provenance is explicit: real NOAA data is
+stored as ``source=AIS, is_measured=True`` while the synthetic generator uses
+``source=DEMO_AIS, is_measured=False``.
 """
 
 from __future__ import annotations
@@ -31,17 +16,12 @@ from datetime import UTC, datetime, timedelta
 
 from .. import reference as ref
 
-# ---------------------------------------------------------------- geography
 BBOX = {"lat_min": 33.55, "lat_max": 33.85, "lon_min": -118.45, "lon_max": -118.05}
-ANCHORAGE_RECTS = [  # documented approximations, not official chart polygons
-    # Original outer anchorage (ships waiting further out)
+ANCHORAGE_RECTS = [
     {"name": "San Pedro Anchorage A/B (approx.)", "lat_min": 33.60, "lat_max": 33.72, "lon_min": -118.30, "lon_max": -118.18},
-    # Covers all four POLB terminal berth zones with ±0.005 deg spread around each centre
-    # Z-LBCT(33.750,-118.217)  Z-ITS(33.746,-118.203)  Z-PCT(33.741,-118.181)  Z-TTI(33.736,-118.210)
     {"name": "Long Beach Terminal Berths (approx.)", "lat_min": 33.730, "lat_max": 33.756, "lon_min": -118.223, "lon_max": -118.175},
 ]
 TERMINAL_ANCHORS = {t["zone_code"]: (t["lat"], t["lon"]) for t in ref.TERMINALS}
-
 REQUIRED = ("mmsi", "basedatetime", "lat", "lon", "sog")
 
 
@@ -75,7 +55,7 @@ def _header_map(fieldnames: list[str]) -> dict[str, str]:
 
 
 def build(ais_csv: str, out_csv: str, min_anchor_min: float = 0.0, sog_max: float = 1.0) -> dict:
-    """Convert an AccessAIS export into the per-zone hourly congestion series."""
+    """Convert an AccessAIS export into a per-zone hourly congestion series."""
     first: dict[str, datetime] = {}
     last: dict[str, datetime] = {}
     pos_sum: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0, 0])
@@ -91,8 +71,7 @@ def build(ais_csv: str, out_csv: str, min_anchor_min: float = 0.0, sog_max: floa
             rows += 1
             try:
                 lat = float(row[cols["lat"]]); lon = float(row[cols["lon"]]); sog = float(row[cols["sog"]])
-                mmsi = str(row[cols["mmsi"]]).strip()
-                ts = _parse_dt(row[cols["basedatetime"]])
+                mmsi = str(row[cols["mmsi"]]).strip(); ts = _parse_dt(row[cols["basedatetime"]])
             except (KeyError, ValueError, TypeError):
                 skipped += 1
                 continue
@@ -107,7 +86,6 @@ def build(ais_csv: str, out_csv: str, min_anchor_min: float = 0.0, sog_max: floa
             agg = pos_sum[mmsi]
             agg[0] += lat; agg[1] += lon; agg[2] += 1
 
-    # per-vessel interval + zone
     vessels: list[tuple[str, datetime, datetime, float, str]] = []
     for mmsi, t0 in first.items():
         t1 = last[mmsi]
@@ -123,37 +101,28 @@ def build(ais_csv: str, out_csv: str, min_anchor_min: float = 0.0, sog_max: floa
 
     start = min(v[1] for v in vessels).replace(minute=0, second=0, microsecond=0)
     end = max(v[2] for v in vessels).replace(minute=0, second=0, microsecond=0)
-
     series: list[dict] = []
     hour = start
     while hour <= end:
         per_zone: dict[str, list[float]] = {z: [] for z in ref.TERMINAL_ZONES}
         for _mmsi, t0, t1, dwell, zone in vessels:
-            # vessel counts toward hour bucket [hour, hour+1) if its anchored interval overlaps it
             if t0 < hour + timedelta(hours=1) and t1 >= hour:
                 per_zone[zone].append(dwell)
-        port_q = 0
-        port_wsum = 0.0
+        port_q = 0; port_wsum = 0.0
         for zone, dwells in per_zone.items():
-            q = len(dwells)
-            wait = sum(dwells) / q if q else 0.0
+            q = len(dwells); wait = sum(dwells) / q if q else 0.0
             series.append({"zoneCode": zone, "ts": hour, "queueCount": q,
-                           "avgWaitHrs": round(wait, 2),
-                           "index": round(_index(q, wait), 2)})
-            port_q += q
-            port_wsum += wait * q
+                           "avgWaitHrs": round(wait, 2), "index": round(_index(q, wait), 2)})
+            port_q += q; port_wsum += wait * q
         port_wait = port_wsum / port_q if port_q else 0.0
         series.append({"zoneCode": "Z-PORT", "ts": hour, "queueCount": port_q,
                        "avgWaitHrs": round(port_wait, 2), "index": round(_index(port_q, port_wait), 2)})
         hour += timedelta(hours=1)
 
     with open(out_csv, "w", newline="", encoding="utf-8") as fh:
-        w = csv.writer(fh)
-        w.writerow(["zoneCode", "ts", "queueCount", "avgWaitHrs", "index"])
+        w = csv.writer(fh); w.writerow(["zoneCode", "ts", "queueCount", "avgWaitHrs", "index"])
         for r in series:
-            w.writerow([r["zoneCode"], r["ts"].strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        r["queueCount"], r["avgWaitHrs"], r["index"]])
-
+            w.writerow([r["zoneCode"], r["ts"].strftime("%Y-%m-%dT%H:%M:%SZ"), r["queueCount"], r["avgWaitHrs"], r["index"]])
     return {"rows_scanned": rows, "skipped": skipped, "vessels": len(vessels),
             "hours": (end - start).total_seconds() / 3600 + 1, "output_rows": len(series)}
 
@@ -162,30 +131,27 @@ def _index(queue: float, wait_hours: float) -> float:
     return max(0.0, min(100.0, 60 * (queue / ref.CONGESTION_QUEUE_CAP) + 40 * (wait_hours / ref.CONGESTION_WAIT_CAP)))
 
 
-def import_series(series_csv: str) -> dict:
-    """Replace the congestion history with an AIS-derived series (source="AIS")."""
+def import_series(series_csv: str, source: str = "AIS", is_measured: bool = True) -> dict:
+    """Replace congestion history and preserve the caller's provenance label."""
     from sqlalchemy import delete
-
     from ..db import SessionLocal, init_db
     from ..models import CongestionObservation
 
+    if source not in {"AIS", "DEMO_AIS", "SIM"}:
+        raise ValueError(f"unsupported congestion source: {source}")
+
     with open(series_csv, newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        rows = list(reader)
+        rows = list(csv.DictReader(fh))
     if not rows:
         raise SystemExit("series CSV is empty")
     newest = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
-
-    init_db()
-    db = SessionLocal()
+    init_db(); db = SessionLocal()
     try:
-        db.execute(delete(CongestionObservation))
-        seen: set[tuple[str, int]] = set()
-        count = 0
+        db.execute(delete(CongestionObservation)); seen: set[tuple[str, int]] = set(); count = 0
         for r in rows:
             ts = _parse_dt(r["ts"])
             if ts > newest:
-                continue  # skip future records (pinned vessel dwell past now)
+                continue
             hours_ago = int(round((newest - ts).total_seconds() / 3600))
             key = (r["zoneCode"], hours_ago)
             if key in seen:
@@ -195,11 +161,11 @@ def import_series(series_csv: str) -> dict:
                 zone_code=r["zoneCode"], ts=ts, hours_ago=hours_ago,
                 queue_count=int(float(r["queueCount"])), avg_wait_hours=float(r["avgWaitHrs"]),
                 index=float(r["index"]), yard_util_pct=None,
-                source="AIS", is_measured=True, confidence=0.85,
-            ))
-            count += 1
+                source=source, is_measured=is_measured, confidence=0.85 if is_measured else 0.70,
+            )); count += 1
         db.commit()
-        return {"inserted": count, "zones": len({r["zoneCode"] for r in rows}), "newest_ts": newest.isoformat()}
+        return {"inserted": count, "source": source, "is_measured": is_measured,
+                "zones": len({r["zoneCode"] for r in rows}), "newest_ts": newest.isoformat()}
     finally:
         db.close()
 
@@ -208,13 +174,10 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="app.pipelines.ais", description="NOAA AccessAIS → congestion series → PostgreSQL")
     sub = p.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build", help="AccessAIS CSV → congestion-series CSV")
-    b.add_argument("ais_csv"); b.add_argument("out_csv")
-    b.add_argument("--min-anchor-min", type=float, default=0.0)
-    b.add_argument("--sog-max", type=float, default=1.0)
+    b.add_argument("ais_csv"); b.add_argument("out_csv"); b.add_argument("--min-anchor-min", type=float, default=0.0); b.add_argument("--sog-max", type=float, default=1.0)
     i = sub.add_parser("import", help="congestion-series CSV → database (source=AIS)")
     i.add_argument("series_csv")
     args = p.parse_args(argv)
-
     if args.cmd == "build":
         print(build(args.ais_csv, args.out_csv, args.min_anchor_min, args.sog_max))
     else:
