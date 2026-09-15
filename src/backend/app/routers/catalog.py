@@ -60,6 +60,17 @@ def hotspots(db: Session = Depends(get_db)):
     return pipeline.build_full(db, persist=False)["hotspots"]
 
 
+@router.patch("/terminals/{code}/config_version")
+def bump_config_version(code: str, db: Session = Depends(get_db)):
+    """Module A: increment config_version so context fingerprint changes and caches invalidate."""
+    term = db.execute(select(Terminal).where(Terminal.code == code)).scalars().first()
+    if term is None:
+        raise HTTPException(404, f"terminal {code!r} not found")
+    term.config_version = (term.config_version or 1) + 1
+    db.commit()
+    return {"code": code, "config_version": term.config_version}
+
+
 @router.post("/vessels/upload")
 async def upload_schedule(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """Import a physically complete vessel schedule and immediately rebuild the plan.
@@ -108,7 +119,8 @@ async def upload_schedule(file: UploadFile = File(...), db: Session = Depends(ge
             origin_port=(r.get("origin_port") or "").strip() or "Unknown", reefer_units=r.get("reefer_units", 0),
             status="INBOUND", anchorage_zone="En route — San Pedro Approach",
             declared_eta_hours=r["declared_eta_hours"], ais_eta_hours=None,
-            etd_hours=r["declared_eta_hours"] + 26.0, anchored_hours=0.0,
+            etd_hours=float(r["etd_hours"]) if r.get("etd_hours") else r["declared_eta_hours"] + 26.0,
+            anchored_hours=0.0,
             dest_zone_code=zone, data_confidence=1.0, unresolved=False,
             raw={"upload_filename": file.filename, "units": {"loa": "ft", "beam": "ft", "draft": "ft", "eta": "h"}},
         )
@@ -122,6 +134,12 @@ async def upload_schedule(file: UploadFile = File(...), db: Session = Depends(ge
                                   report={"errors": errors, "created": created})
     db.add(upload); db.commit(); db.refresh(upload)
 
+    # Module D: run normalisation pass on newly uploaded vessels so normalised column is current
+    normalised_count = 0
+    if accepted > 0:
+        from ..services.dataquality import NormalisationEngine
+        normalised_count = NormalisationEngine(db).run()
+
     replan = {"status": "not_requested"}
     if accepted > 0:
         try:
@@ -131,5 +149,6 @@ async def upload_schedule(file: UploadFile = File(...), db: Session = Depends(ge
             replan = {"status": "failed", "error": str(exc)}
 
     return {"accepted": accepted, "rejected": rejected, "errors": errors,
-            "revisions_created": revisions_created, "upload_id": upload.id,
-            "filename": file.filename, "bytes": len(raw), "stub": False, "replan": replan}
+            "revisions_created": revisions_created, "normalised_rows": normalised_count,
+            "upload_id": upload.id, "filename": file.filename, "bytes": len(raw),
+            "stub": False, "replan": replan}
