@@ -11,22 +11,21 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # database
-    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/portflow"  # Postgres-only stack: models use JSONB, which SQLite cannot store
+    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/portflow"
     db_echo: bool = False
 
     # api
     port: int = 8000
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
-    # llm (narrative layer) — IBM Bob (harness) preferred, then Claude, then deterministic
-    llm_provider: str = "auto"          # auto | bob | claude | deterministic
-    bob_api_key: str = ""               # maps to env BOB_API_KEY
-    bob_team_id: str = ""               # only for a "general" API key
+    # agent layer — IBM Bob is the sole agent provider.
+    # Deterministic engine-grounded text is used only when Bob is unavailable.
+    llm_provider: str = "auto"          # auto | bob | deterministic
+    bob_api_key: str = ""
+    bob_team_id: str = ""
     bob_cli: str = "bob"
     bob_max_turns: int = 3
     bob_timeout_s: int = 240
-    anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-5"
 
     # data pipelines
     open_meteo_base: str = "https://api.open-meteo.com"
@@ -37,15 +36,13 @@ class Settings(BaseSettings):
     sim_seed: int = 20240817
     sim_horizon_hours: int = 72
 
-    # ---- Phase 0 feature flags (each owner flips their flag on when the feature lands) ----
-    # W1 + W3 both landed, so all six default on: the shipped demo exercises the real
-    # engine paths without requiring a hand-written .env (see .env.example).
-    feature_weather: bool = True        # W1 weather pipeline + W2 weather features
-    feature_quality: bool = True        # W1 normalisation + completeness score
-    feature_upload: bool = True         # W1 CSV schedule upload / ETA revisions
-    feature_tidal: bool = True          # W3 tidal windows in CP-SAT
-    feature_incremental: bool = True    # W3 CP-SAT warm-start re-optimise
-    feature_scenarios_ext: bool = True  # W3 berth/bunching scenarios + rollback
+    # shipped feature flags
+    feature_weather: bool = True
+    feature_quality: bool = True
+    feature_upload: bool = True
+    feature_tidal: bool = True
+    feature_incremental: bool = True
+    feature_scenarios_ext: bool = True
 
     @property
     def cors_list(self) -> list[str]:

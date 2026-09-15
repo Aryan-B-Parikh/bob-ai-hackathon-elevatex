@@ -1,46 +1,49 @@
-# PortFlow SBX — Python backend
+# PortPulse AI — Python backend
 
-FastAPI gateway + capability services, implementing the stack from the technical
-plan (`3_Technical_Architecture_and_Build_Plan.md` §1):
+FastAPI gateway + capability services implementing the core L1 architecture:
 
 | Capability | Technology | Module |
 |---|---|---|
-| Gateway / API | **FastAPI** (Python 3.11) | `app/main.py`, `app/routers/*` |
-| Simulation (synthetic ops layer) | **SimPy** discrete-event | `app/services/simulation.py` |
-| Congestion forecasting | **LightGBM** (+ quantile bands) | `app/services/forecasting.py` |
-| Anomaly / disruption detection | **scikit-learn Isolation Forest** | `app/services/anomaly.py` |
-| Hotspot ranking + risk score | deterministic scorer | `app/services/hotspot.py` |
-| Berth/crane optimisation (BAP/QCAP) | **Google OR-Tools CP-SAT** | `app/services/optimiser.py` |
-| Routing / diversion | rule + cost model | `app/services/routing.py` |
-| 72-hour plan | assembler + **Claude** narrative | `app/services/plan.py`, `llm.py` |
-| Persistence | **PostgreSQL** (SQLAlchemy 2 + psycopg3) | `app/models.py`, `db.py` |
+| Gateway / API | FastAPI | `app/main.py`, `app/routers/*` |
+| Simulation | SimPy discrete-event | `app/services/simulation.py` |
+| Congestion forecasting | LightGBM + quantile bands | `app/services/forecasting.py` |
+| Anomaly / disruption | scikit-learn Isolation Forest | `app/services/anomaly.py` |
+| Hotspot / bottleneck | deterministic risk scorer | `app/services/hotspot.py` |
+| Berth/crane optimisation | Google OR-Tools CP-SAT | `app/services/optimiser.py` |
+| Routing | deterministic decision engine | `app/services/routing.py` |
+| 72h plan | plan assembler | `app/services/plan.py` |
+| Agent | IBM Bob via MCP | `app/services/bob_agent.py`, `app/mcp_server.py` |
+| Persistence | PostgreSQL + SQLAlchemy | `app/models.py`, `app/db.py` |
 
 ## Run
 
 ```bash
-uv sync --python 3.11          # install (pins Python 3.11)
-
-# Postgres must be running; create the database once:
+uv sync --python 3.11
 createdb -U postgres portflow
-
-cp .env.example .env           # then set DATABASE_URL + (optional) ANTHROPIC_API_KEY
-
-uv run python -m app.seed      # real POLB terminals + SimPy synthetic ops layer
+cp .env.example .env
+# Set DATABASE_URL and BOB_API_KEY locally.
+uv run python -m app.seed
 uv run uvicorn app.main:app --reload --port 8000
-# docs: http://localhost:8000/docs
 ```
 
-## Layout
+## Architecture
 
+```text
+Real POLB capacity + labelled DEMO_AIS + weather
+                    ↓
+          SimPy / data context
+                    ↓
+      LightGBM + Isolation Forest
+                    ↓
+       Risk / binding-resource layer
+                    ↓
+            OR-Tools CP-SAT
+                    ↓
+      Routing + 72-hour operations plan
+                    ↓
+             IBM Bob via MCP
+                    ↓
+       Supervisor-facing explanation
 ```
-app/
-├── main.py            # FastAPI gateway (mounts every capability router)
-├── config.py          # pydantic-settings
-├── db.py              # SQLAlchemy engine / session / Base
-├── models.py          # full data model (spec §18 entity flow)
-├── reference.py       # REAL POLB terminals + documented constants
-├── seed.py            # DB seed (reference + SimPy output)
-├── routers/           # one router per capability
-└── services/          # simulation, forecasting, anomaly, hotspot, optimiser,
-                       # routing, plan, llm, context, pipeline
-```
+
+IBM Bob is the only AI-agent provider. If Bob is unavailable, the application uses a deterministic template over the same engine outputs; there is no Claude or other external-LLM fallback.

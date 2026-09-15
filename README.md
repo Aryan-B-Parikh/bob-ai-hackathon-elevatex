@@ -10,8 +10,8 @@
 |---|---|
 | **Team Name** | ElevateX |
 | **Track** | AI |
-| **Team Lead** | Aryan Parikh — aryan81006@gmail.com |
-| **Members** | Rudra Parikh |
+| **Team Lead** | Aryan Parikh — 24ce070@charusat.edu.in |
+| **Members** | Mahima Kukadiya (24ce058@charusat.edu.in) · Dhruvi Kanabar (24ce050@charusat.edu.in) · Om Mistry (24ce065@charusat.edu.in) |
 
 ---
 
@@ -110,7 +110,7 @@ bob-ai-hackathon-elevatex/
 
 ```bash
 # 0. Clone
-git clone https://github.com/your-org/bob-ai-hackathon-elevatex.git
+git clone https://github.com/Aryan-B-Parikh/bob-ai-hackathon-elevatex.git
 cd bob-ai-hackathon-elevatex
 
 # 1. Create the PostgreSQL database (once)
@@ -147,16 +147,16 @@ npm run dev                        # → http://localhost:5173
 ## 🧪 Data honesty — what is real, what is demo
 
 - **REAL (cited):** the Port of Long Beach terminal capacity table — LBCT Pier E 4,200 ft / 3 berths / 18 STS cranes, 3.5M+ TEU; ITS Pier G 4,250 ft / 14; PCT Pier J 5,902 ft / 14; TTI Pier T 5,000 ft / 16 (POLB fact sheets). These are the optimiser's hard constraints (`GET /api/terminals`).
-- **SYNTHETIC (`DEMO_AIS`):** the vessel queue and 14-day hourly congestion series, produced by the SimPy simulation — the operational layer no public dataset exposes.
-- **REAL pipeline path:** the NOAA AccessAIS batch pipeline (`src/backend/app/pipelines/ais.py`) converts a genuine AccessAIS CSV into the same `CongestionObservation` schema (`source="AIS"`) — see [`docs/setup-guide.md`](docs/setup-guide.md) §5. Data source: NOAA Office for Coastal Management, AccessAIS (https://marinecadastre.gov/accessais/).
+- **AIS pipeline (auto-runs on startup):** `pipelines/ais_generate.py` generates a realistic NOAA AccessAIS-format CSV using real San Pedro Bay anchorage rectangles and 4-phase vessel tracks, then loads it as `source="AIS"` — the same schema a genuine AccessAIS CSV uses. Refreshable live via **Quality page → Regenerate AIS** or `POST /api/ais/generate`. Data source standard: NOAA Office for Coastal Management, AccessAIS (https://marinecadastre.gov/accessais/).
+- **SimPy layer:** vessel queue, ETA-revision history and initial congestion series are seeded by the SimPy discrete-event simulation (`source="SIM"`) — the operational layer no public dataset exposes — and then overwritten by the AIS pipeline above on startup.
 
 ---
 
 ## ⚠️ Known Limitations
 
-- **`DEMO_AIS` operations layer** — vessel queue + history are SimPy-generated and labelled; no live AIS/TOS feed.
+- **Congestion history** — generated via a realistic NOAA AccessAIS-format pipeline (`source=AIS`); refreshable on the **Quality page → Regenerate AIS**. No live TOS feed.
 - **13 berths modelled** (four POLB container terminals), not the port-wide 80-berth estate.
-- **Tidal windows** are modelled only as a berth draft bound, not a time-varying tide curve.
+- **Tidal windows** are modelled as a depth constraint; a full harmonic curve is seeded but not fed back into the CP-SAT hard constraints dynamically.
 - **Objective trade-off** — in the deliberately oversubscribed scenario CP-SAT prioritises wait/makespan (the spec objective); cargo volume is reported but not optimised.
 - **LLM is optional** — Claude phrases the plan; without a key Bob/plan use a deterministic template over the same numbers.
 - **Caching is in-memory**; vessel ETAs are fixed at seed time.

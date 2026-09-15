@@ -160,10 +160,10 @@ Verified: `uv run pytest` → **14 passed**; provenance now `forecast_run_id=2 /
 
 | Source | Status |
 |---|---|
-| NOAA AccessAIS | ✅ pipeline (`app/pipelines/ais.py`, tested) — **not loaded** (ships `DEMO_AIS`) |
+| NOAA AccessAIS | ✅ pipeline (`app/pipelines/ais.py`, tested) + `ais_generate.py` **auto-loads on startup** (`source="AIS"`) |
 | SimPy synthetic ops | ✅ |
-| BTS PPFSP | ❌ |
-| Open-Meteo weather | ❌ (config only; `/api/weather` stub) |
+| BTS PPFSP | ✅ parser + `/api/bts/parse` |
+| Open-Meteo weather | ✅ pipeline `pipelines/weather.py` + marine API for wave_height |
 | World Port Index / Kaggle ports | ➖ replaced by real POLB fact sheet (better, cited) |
 
 ---

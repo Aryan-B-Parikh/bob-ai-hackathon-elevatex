@@ -253,14 +253,12 @@ export default function BerthCranes() {
                     return acc;
                   }, {})
                 ).sort().map(([berth, list]: any) => {
-                  // find tidal curve for this berth (if available)
                   const tideCurve = tides?.berths?.find((b: any) => b.berth_name === list[0]?.berth_name)?.curve ?? [];
 
                   return (
                     <div key={berth} className="flex items-center gap-2 py-0.5">
                       <div className="font-mono text-[10px] text-[var(--text-secondary)] shrink-0 truncate" style={{ width: 110 }}>{berth}</div>
                       <div className="relative flex-1" style={{ height: 26, background: "var(--bg-surface-elevated)", border: "1px solid var(--border-subtle)", borderRadius: 6 }}>
-                        {/* Tidal low-water shading */}
                         {tideCurve.slice(0, MAX_HOUR).map((pt: any, hi: number) => {
                           if (pt.depth_ft >= (list[0]?.design_depth_ft ?? 52)) return null;
                           return (
@@ -276,9 +274,8 @@ export default function BerthCranes() {
                             />
                           );
                         })}
-                        {/* Vessel blocks */}
                         {list.map((a: any, i: number) => (
-                          <div key={i}
+                          <div key={`${a.vessel_id ?? a.vessel_name}-${a.start_hour}-${a.end_hour}-${i}`}
                             title={`${a.vessel_name} · +${a.start_hour}→${a.end_hour}h · ${a.cranes} cranes · wait ${a.wait_hours}h · priority ${a.priority_score}`}
                             className="absolute top-0 h-full text-[9px] flex items-center justify-center font-semibold overflow-hidden select-none"
                             style={{
@@ -297,7 +294,6 @@ export default function BerthCranes() {
                   );
                 })}
 
-                {/* Tidal legend */}
                 {tides && (
                   <div className="flex items-center gap-2 mt-2 text-[9px] text-[var(--text-muted)]">
                     <span style={{ display: "inline-block", width: 12, height: 10, background: "rgba(96, 165, 250, 0.15)", border: "1px solid rgba(96, 165, 250, 0.3)", borderRadius: 2 }} />
@@ -328,8 +324,8 @@ export default function BerthCranes() {
                   </tr>
                 </thead>
                 <tbody>
-                  {opt.assignments?.map((a: any) => (
-                    <tr key={a.vessel_id} className="border-t border-[var(--border-subtle)]">
+                  {opt.assignments?.map((a: any, i: number) => (
+                    <tr key={`${a.vessel_id ?? a.vessel_name}-${a.start_hour}-${a.end_hour}-${a.berth_name}-${i}`} className="border-t border-[var(--border-subtle)]">
                       <td className="py-1 pr-2 font-medium">{a.vessel_name}</td>
                       <td className="pr-2 font-mono">{a.berth_name}</td>
                       <td className="pr-2 text-[var(--text-secondary)]">{a.terminal_code}</td>
@@ -346,8 +342,8 @@ export default function BerthCranes() {
             {!!opt.deferred?.length && (
               <div className="mt-2 space-y-0.5">
                 <div className="text-xs font-semibold text-[var(--status-warning)]">Deferred vessels:</div>
-                {opt.deferred.map((d: any) => (
-                  <div key={d.vessel_name} className="text-[10px] font-mono text-[var(--text-muted)]">
+                {opt.deferred.map((d: any, i: number) => (
+                  <div key={`${d.vessel_id ?? d.vessel_name}-${i}`} className="text-[10px] font-mono text-[var(--text-muted)]">
                     {d.vessel_name} — {d.reason ?? "beyond 72h horizon"}
                   </div>
                 ))}

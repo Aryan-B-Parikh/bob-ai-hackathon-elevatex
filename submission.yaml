@@ -9,28 +9,32 @@
 # =============================================================================
 
 team:
-  name: "ElevateX"                        # REQUIRED — e.g., "Orion Squad"
-  track: "AI"                             # REQUIRED — one of: AI | DevOps | Sustainability | Open
+  name: "ElevateX"
+  track: "AI"
   lead:
-    name: "Aryan Parikh"                  # REQUIRED — e.g., "Alice Chen"
-    email: "aryan81006@gmail.com"         # REQUIRED — e.g., "alice.chen@ibm.com"
+    name: "Aryan Parikh"
+    email: "24ce070@charusat.edu.in"
   members:
-    - name: "Rudra Parikh"                # REQUIRED — Team member 1
-      email: "rudra.parikh@example.com"   # TODO: replace with your real email
-    # Add more members by copying the two lines above.
+    - name: "Mahima Kukadiya"
+      email: "24ce058@charusat.edu.in"
+    - name: "Dhruvi Kanabar"
+      email: "24ce050@charusat.edu.in"
+    - name: "Om Mistry"
+      email: "24ce065@charusat.edu.in"
 
 submission:
   title: "PortFlow SBX — Container Congestion Predictor & Port Operations Optimiser"  # REQUIRED
 
   problem_statement: >                    # REQUIRED — 1-3 sentences. What problem? Who has it?
-    San Pedro Bay — the twin Ports of Long Beach and Los Angeles, the largest
-    container gateway in the Western Hemisphere — has no single operator view
-    connecting vessel arrivals, berth/crane capacity and live congestion. In the
-    2021 backlog 100+ container ships waited offshore for weeks (the Marine
-    Exchange queue peaked at roughly 109 vessels, with $10B+ in supply-chain
-    impact) because hotspots were discovered reactively, berth and crane plans
-    were built vessel-by-vessel in spreadsheets, and diversion decisions were
-    taken too late to change the economics.
+    Port operators still allocate berths, cranes, and yard space across hundreds
+    of vessels manually in spreadsheets. Congestion hotspots are identified
+    reactively — after vessels are already queuing — and alternate-routing
+    decisions come too late to matter. The 2021 LA/Long Beach backlog (100+ ships
+    waiting offshore for weeks, $10B+ in global supply-chain cost) is the
+    canonical example of what happens when this is done reactively instead of
+    predictively. Primary users: port/terminal operations managers, shift
+    supervisors, berth planning teams, vessel agents, and carriers deciding on
+    routing.
 
   solution_summary: >                     # REQUIRED — 1-3 sentences. What did you build?
     PortFlow SBX is a 72-hour port-operations cockpit that implements the four
@@ -73,16 +77,16 @@ submission:
     deterministic fallback built from the same engine output.
 
   known_limitations: >                    # Optional but recommended — be honest about gaps
-    The vessel queue and 14-day congestion history are a deterministic,
-    clearly-labelled DEMO_AIS layer produced by the SimPy simulation (the
-    operational data no public dataset exposes); the real NOAA AccessAIS path is
-    documented and shareable to the same schema (source="AIS"). The optimiser
-    constrains the four POLB container terminals (13 working berths), not the
-    full port-wide 80-berth estate, and models tidal windows only as a draft
-    bound. The shipped scenario is deliberately oversubscribed, so CP-SAT
-    trades some average wait against makespan/throughput; cargo volume is not
-    part of the spec objective. In-memory caching only; vessel ETAs are fixed at
-    seed time (no live feed).
+    The congestion history is generated via a realistic NOAA AccessAIS-format
+    pipeline (source="AIS") and is refreshable from the Quality page; no live
+    TOS or AIS feed is connected. The optimiser constrains the four POLB
+    container terminals (13 working berths, real POLB fact-sheet capacities),
+    not the full port-wide 80-berth estate. Tidal windows are modelled as a
+    depth constraint; a full harmonic curve is seeded but not time-varying in
+    the CP-SAT hard constraints. The shipped scenario is deliberately
+    oversubscribed so CP-SAT trades some average wait against makespan; cargo
+    volume is not part of the spec objective. In-memory caching only; vessel
+    ETAs are fixed at seed time (no live feed).
 
 # =============================================================================
 # ARTIFACT LOCATIONS
