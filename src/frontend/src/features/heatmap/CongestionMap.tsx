@@ -372,9 +372,9 @@ export function CongestionMap({
         San Pedro Bay · POLB / POLA Real Coordinates
       </div>
 
-      {/* Offline / Keyless Attribution Notice */}
+      {/* Tile attribution / error notice */}
       <div className="absolute bottom-2 right-3 z-10 px-2 py-0.5 rounded text-[9px] text-[var(--text-muted)] bg-[var(--bg-surface)]/80 backdrop-blur-xs pointer-events-none">
-        {tileError ? "Local / Cached Basemap Grid Active" : "Map: © OpenStreetMap contributors © CARTO"}
+        {tileError ? "Tile server unreachable — markers and heatmap only" : defaultMapProvider.getShortAttribution()}
       </div>
     </div>
   );
