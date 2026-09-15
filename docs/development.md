@@ -1,56 +1,61 @@
-# Developing PortFlow SBX
+# Developing PortPulse AI
 
-Developer workflow. (The root [`CONTRIBUTING.md`](../CONTRIBUTING.md) is the hackathon **submission** guide;
-this file is the **code** contribution guide.)
+Developer workflow. The core rule is **no scope creep**: keep the submission focused on the complete L1 decision loop.
 
 ## Setup
 
 ```bash
-# database (once)
 createdb -U postgres portflow
 
-# backend (FastAPI + engines) — run from src/backend
 cd src/backend
 uv sync --python 3.11
-cp .env.example .env            # set DATABASE_URL (+ optional ANTHROPIC_API_KEY)
+cp .env.example .env            # set DATABASE_URL and, for agentic mode, BOB_API_KEY
 uv run python -m app.seed
 uv run uvicorn app.main:app --reload --port 8000
 
-# frontend (React + Vite) — run from src/frontend
 cd ../frontend
 npm install
-npm run dev                     # http://localhost:5173
+npm run dev
 ```
 
 ## Daily commands
 
-| Command (dir) | Purpose |
+| Command | Purpose |
 |---|---|
-| `uv run uvicorn app.main:app --reload` (`backend/`) | Run the FastAPI gateway on :8000 |
-| `uv run python -m app.seed` (`backend/`) | Reseed REAL POLB reference + SimPy operations layer |
-| `npm run dev` (`frontend/`) | Vite dev server on :5173 (proxies `/api` → :8000) |
-| `npm run build` (`frontend/`) | Type-check + production build |
-| `uv run ruff check app` (`backend/`) | Lint the backend (if `ruff` installed) |
+| `uv run uvicorn app.main:app --reload` | FastAPI gateway on :8000 |
+| `uv run python -m app.seed` | Seed real POLB reference + SimPy operations layer |
+| `npm run dev` | Vite development server on :5173 |
+| `npm run build` | Type-check + production build |
+| `uv run ruff check app` | Backend lint |
+| `uv run pytest` | Backend tests |
 
-## Where things live
+## Architecture
 
-- Simulation: `backend/app/services/simulation.py` (SimPy) + `reference.py` (REAL POLB data)
-- Engines: `backend/app/services/` — `forecasting.py` (LightGBM), `anomaly.py` (Isolation Forest),
-  `hotspot.py`, `optimiser.py` (OR-Tools CP-SAT), `routing.py`, `plan.py`, `llm.py` (Claude)
-- Gateway/API: `backend/app/main.py`, `backend/app/routers/`
-- Data model: `backend/app/models.py`; seed: `backend/app/seed.py`
-- UI: `frontend/src/App.tsx` (6 tabs), `frontend/src/api.ts` (typed client)
+- Simulation: `backend/app/services/simulation.py`
+- Forecasting: `backend/app/services/forecasting.py` (LightGBM)
+- Anomalies: `backend/app/services/anomaly.py` (Isolation Forest)
+- Hotspots: `backend/app/services/hotspot.py`
+- Optimisation: `backend/app/services/optimiser.py` (OR-Tools CP-SAT)
+- Routing: `backend/app/services/routing.py`
+- Plan: `backend/app/services/plan.py`
+- Bob agent: `backend/app/services/bob_agent.py`
+- MCP server: `backend/app/mcp_server.py`
+- UI: `frontend/src/`
 
-## PR checklist
+## Scope lock
 
-- [ ] Change maps to a challenge item (predict hotspots / alternate routing / optimise berths & cranes /
-      72-hour plan) or required infrastructure. No scope creep.
-- [ ] Template files/folders intact: `submission.yaml`, `README.md`, `docs/`, `demo/`, `presentation/`,
-      `CONTRIBUTING.md`.
-- [ ] `.github/workflows/validate.yml` untouched; `.gitignore` still excludes `.env`, `node_modules/`,
-      `.venv/`, build artefacts — never commit those.
-- [ ] Backend imports cleanly (`uv run python -c "import app.main"`); frontend `npm run build` passes.
-- [ ] Data honesty preserved: terminal capacities stay the cited REAL POLB figures; anything synthetic
-      stays labelled `DEMO_AIS`; anything real cites its source.
-- [ ] Numbers in docs match the code (constants live in `backend/app/reference.py`).
-- [ ] Disclose breakage in "Known Limitations" (root README).
+The MVP is **observe → predict → explain risk → optimise → route → plan → Bob**.
+
+Do not add major new subsystems before submission. Full live TOS/EDI integration, complete port-wide coverage, continuous retraining, enterprise authentication and distributed scheduling are Phase-2 work.
+
+## Data honesty
+
+- Real POLB capacity remains sourced from published fact sheets.
+- Synthetic operational history remains explicitly labelled `DEMO_AIS`.
+- Real AIS is supported through the NOAA AccessAIS replacement pipeline.
+- Weather is sourced from Open-Meteo.
+- Do not present synthetic demo values as live terminal telemetry.
+
+## Agent rule
+
+IBM Bob is the only AI-agent provider. It invokes the operational engines through MCP. If Bob is unavailable, use the deterministic engine-derived briefing; do not add another external LLM fallback.
