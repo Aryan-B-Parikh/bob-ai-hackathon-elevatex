@@ -288,6 +288,9 @@ def build_overview(ctx: EngineContext, forecasts: dict, hotspots: dict, anomalie
     return {
         "t0": ctx.t0.isoformat(),
         "dataset": {"source": ctx.dataset_source, "note": DATASET_NOTE},
+        # audit B-5: the overview must report the weather path too (forecast already does)
+        "weather_used": bool(getattr(port, "weather_used", False)),
+        "confidence": float(getattr(port, "confidence", 1.0)),
         "kpis": kpis,
         "zones": zones,
         "alerts": alerts,

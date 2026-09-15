@@ -18,9 +18,24 @@ router = APIRouter(prefix="/api", tags=["plan"])
 
 @router.get("/plan")
 def get_plan(db: Session = Depends(get_db), text: int = Query(0), persist: int = Query(0)):
+    """Latest persisted plan when one exists (audit B-4: the read path must cite real
+    run ids, not `#None`); otherwise a fresh build. `persist=1` also saves it."""
+    from ..models import OperationsPlan
+    from sqlalchemy import select
+
+    latest = db.execute(select(OperationsPlan).order_by(OperationsPlan.id.desc())).scalars().first()
+    if latest is not None and not persist:
+        summary = dict(latest.summary or {})
+        summary.setdefault("confidence_by_bucket", {})
+        out = {"summary": summary, "shifts": latest.shifts or [], "text": latest.text_plan,
+               "narrative_source": latest.narrative_source}
+        if text:
+            return PlainTextResponse(out["text"])
+        return out
+
     full = pipeline.build_full(db, persist=bool(persist))
     out = full["plan"]
-    out["summary"].setdefault("confidence_by_bucket", {})  # Phase 0 freeze (W3 fills)
+    out["summary"].setdefault("confidence_by_bucket", {})
     if persist:
         pipeline.persist_plan(db, out)
     if text:

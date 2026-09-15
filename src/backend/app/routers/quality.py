@@ -1,11 +1,8 @@
-"""Data-quality + weather capability (W1).
-
-Phase 0 stub: the response SHAPES are frozen here; W1 fills the logic.
-"""
+"""Data-quality + weather capability (W1)."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,37 +14,70 @@ router = APIRouter(prefix="/api", tags=["quality"])
 
 @router.get("/quality")
 def quality(db: Session = Depends(get_db)):
-    """Per-terminal data-completeness score (Module D)."""
-    from ..services.dataquality import compute_terminal_quality
-    compute_terminal_quality(db)
+    """Per-terminal data-completeness score (Module D).
+
+    Audit B-9: vessels are attributed via ``Terminal.zone_code == dest_zone_code``
+    (the previous version joined ``Terminal.code``, which never matches a ``Z-*``
+    zone code and therefore always reported a self-fulfilling 100%).
+    """
     from ..models import TerminalQuality
-    stmt = select(Terminal.code, Terminal.name, TerminalQuality.completeness_pct, TerminalQuality.missing, TerminalQuality.rules_version).join(TerminalQuality, Terminal.id == TerminalQuality.terminal_id)
+    from ..services.dataquality import compute_terminal_quality
+
+    compute_terminal_quality(db)
+    stmt = select(Terminal.code, Terminal.name, TerminalQuality.completeness_pct,
+                  TerminalQuality.missing, TerminalQuality.rules_version).join(
+        TerminalQuality, Terminal.id == TerminalQuality.terminal_id)
     rows = db.execute(stmt).all()
-    terminals = []
-    for code, name, pct, missing, version in rows:
-        terminals.append({"code": code, "name": name, "completeness_pct": pct, "missing": missing or []})
+    terminals = [{"code": code, "name": name, "completeness_pct": pct, "missing": missing or []}
+                 for code, name, pct, missing, version in rows]
     rules_version = rows[0][4] if rows else "v1"
     return {"terminals": terminals, "rules_version": rules_version, "stub": False}
 
 
+@router.post("/weather/refresh")
+def weather_refresh(db: Session = Depends(get_db), hours: int = Query(72, ge=24, le=336)):
+    """Run the W1 Open-Meteo pipeline and persist `WeatherObservation` rows.
+
+    Audit B-6: the pipeline existed but was never invoked, so `FEATURE_WEATHER` was
+    unreachable and `weather_used` stayed false forever. This is the missing wiring.
+    If Open-Meteo is unreachable the pipeline inserts nothing and this returns an
+    empty series — the forecast then reports `weather_used: false` instead of failing.
+    """
+    from ..pipelines.weather import run_weather_pipeline
+
+    run_weather_pipeline(db, hours=hours)
+    return _weather_points(db, hours)
+
+
 @router.get("/weather")
 def weather(db: Session = Depends(get_db), hours: int = Query(72, ge=1, le=336)):
-    """Wind/wave/visibility series for San Pedro Bay."""
+    """Wind/wave/visibility series for San Pedro Bay (rows persisted by the pipeline)."""
+    return _weather_points(db, hours)
+
+
+def _weather_points(db: Session, hours: int) -> dict:
     from ..models import WeatherObservation
+
     stmt = select(WeatherObservation).where(
         WeatherObservation.hours_ago >= 0,
         WeatherObservation.hours_ago <= hours,
     ).order_by(WeatherObservation.hours_ago)
     obs = db.execute(stmt).scalars().all()
-    points = [
-        {
-            "hour": o.hours_ago,
-            "ts": o.ts.isoformat(),
-            "wind_kn": o.wind_kn,
-            "gust_kn": o.gust_kn,
-            "wave_m": o.wave_m,
-            "visibility_km": o.visibility_km,
-        }
-        for o in obs
-    ]
+    points = [{
+        "hour": o.hours_ago, "ts": o.ts.isoformat(), "wind_kn": o.wind_kn,
+        "gust_kn": o.gust_kn, "wave_m": o.wave_m, "visibility_km": o.visibility_km,
+    } for o in obs]
     return {"points": points, "source": "OPEN_METEO", "hours": hours, "stub": False}
+
+
+@router.post("/bts/parse")
+def bts_parse(file: UploadFile = File(...)):
+    """Audit B-7: wire the BTS PPFSP benchmark parser to an endpoint (was dead code).
+
+    Accepts a BTS weekly-berthing CSV, validates and parses it, returning the rows
+    for forecast validation. Keeps the benchmark load-bearing.
+    """
+    from ..pipelines.bts import run_bts_pipeline
+
+    raw = file.file.read()
+    return run_bts_pipeline(raw)

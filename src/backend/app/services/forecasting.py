@@ -494,8 +494,12 @@ def forecast_zone(zone_code, zone_name, history, vessels, capacity, t0: datetime
     points = []
     for i in range(HORIZON):
         band = Z_80 * sigma["index"][i]
-        lo = max(fc["lo"][i], fc["index"][i] - band)
-        hi = min(100.0, max(fc["hi"][i], fc["index"][i] + band))
+        # audit B-fix: independent quantile models can straddle the point forecast —
+        # the band must always CONTAIN the point forecast, so enforce it here.
+        pidx = fc["index"][i]
+        lo = max(fc["lo"][i], pidx - band)
+        hi = min(100.0, max(fc["hi"][i], pidx + band))
+        lo, hi = min(lo, pidx), max(hi, pidx)
         qb, wb, yb = Z_80 * sigma["queue"][i], Z_80 * sigma["wait"][i], Z_80 * sigma["yard"][i]
         points.append(ForecastPoint(
             hour=i + 1, ts=t0 + timedelta(hours=i + 1),

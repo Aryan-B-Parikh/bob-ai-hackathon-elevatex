@@ -120,7 +120,7 @@ def seed(reset: bool = False) -> None:
         # vessels + ETA revision history
         for v in sim.vessels:
             vc = VesselCall(
-                imo=v["imo"], mmsi=v["mmsi"], name=v["name"], carrier=v["carrier"],
+                imo=v["imo"], voyage_number=v["voyage_number"], mmsi=v["mmsi"], name=v["name"], carrier=v["carrier"],
                 service_string=v["service_string"], vessel_class=v["vessel_class"], loa_ft=v["loa_ft"],
                 beam_ft=v["beam_ft"], draft_ft=v["draft_ft"], teu_capacity=v["teu_capacity"],
                 import_moves=v["import_moves"], export_moves=v["export_moves"], origin_port=v["origin_port"],

@@ -29,8 +29,11 @@ from .. import reference as ref
 HISTORY_HOURS = 336          # 14 days of hourly history to train on
 FUTURE_HOURS = 72            # ETAs scheduled inside the forecast horizon
 WARMUP_HOURS = 48            # let the queue reach steady state before recording
-DEMAND_BASE_GAP_HOURS = 6.0  # base mean inter-arrival gap (tuned to a near-critical, crisis-prone port)
-SIM_DAYS = (HISTORY_HOURS + WARMUP_HOURS) / 24
+DEMAND_BASE_GAP_HOURS = 4.6  # base mean inter-arrival gap (tuned to a near-critical, crisis-prone port)
+# W3: zone weights are uniform over terminals so no zone drains to zero for the last ~90h of
+# history (which made the Z-TTI forecast train on a flat zero series and the anomaly detector
+# misclassify it). The weights still differ slightly per terminal, just not enough to starve one.
+ZONE_WEIGHTS = {"Z-LBCT": 0.28, "Z-ITS": 0.25, "Z-PCT": 0.25, "Z-TTI": 0.22}
 
 CLASSES = [
     {"cls": "ULCV", "loa": 1312, "beam": 200, "draft": 50.5, "teu": (20000, 24000), "moves": (8500, 12500), "w": 3},
@@ -50,7 +53,7 @@ ORIGINS = ["Busan", "Shanghai", "Yokohama", "Xiamen", "Kaohsiung", "Hong Kong", 
            "Oakland", "Manzanillo", "Qingdao", "Ningbo", "Kobe"]
 ANCH_ZONES = ["San Pedro Anchorage A", "San Pedro Anchorage B", "Long Beach Anchorage C",
               "Anchorage 241-243", "Outside Point Fermin (drift)"]
-ZONE_WEIGHTS = {"Z-LBCT": 0.32, "Z-ITS": 0.24, "Z-PCT": 0.22, "Z-TTI": 0.22}
+ZONE_WEIGHTS = {"Z-LBCT": 0.28, "Z-ITS": 0.25, "Z-PCT": 0.25, "Z-TTI": 0.22}  # no zone starves
 
 
 def congestion_index(queue: float, wait_hours: float) -> float:
@@ -389,6 +392,7 @@ def simulate(seed: int = 20240817, t0: datetime | None = None) -> SimResult:
         vrows.append({
             "mmsi": v.mmsi,
             "imo": f"IMO9{v.mmsi[-6:]}",
+            "voyage_number": f"{v.service_string}-{str(v.arrival_hour)[:2]}{int(v.arrival_hour) % 24:02d}",
             "name": v.name,
             "carrier": v.carrier,
             "service_string": v.service_string,

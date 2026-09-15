@@ -124,6 +124,14 @@ def detect_anomalies(ctx, weather=None) -> list[dict]:
         di = float(pt.index - (history[ai - 1].index if ai > 0 else pt.index))
         sev = _weather_severity(by_ago.get(pt.hours_ago))
 
+        # W3 fix (audit B-8): classify from the WINDOW's characteristics, not only the single
+        # most anomalous point. A sustained outage is a *level shift* (high index, low queue
+        # variance) that the point-deltas of the latest hour never reveal.
+        win_idx = np.array([h.index for h in history[start:]], dtype=float)
+        win_std = float(np.std(win_idx)) if len(win_idx) > 1 else 0.0
+        win_max = float(win_idx.max()) if len(win_idx) else 0.0
+        win_med = float(np.median(win_idx)) if len(win_idx) else 0.0
+
         if abs(dq) > 14 or abs(di) > 40:
             kind = "DATA_ERROR"  # implausible jump → likely sensor/entry error, not a disruption
         elif weather_used and sev >= WEATHER_SEVERITY_REF:
@@ -132,8 +140,11 @@ def detect_anomalies(ctx, weather=None) -> list[dict]:
             kind = "BUNCHING"
         elif (pt.yard_util_pct or 0) >= 92:
             kind = "YARD_SATURATION"
-        elif pt.index >= 70 and abs(di) < 6:
+        elif win_med >= 45 and win_std < 8 and win_med > 1.3 * float(np.median(X[:, 0])):
+            # sustained elevated level with low variance = something is throttling throughput
             kind = "OUTAGE"
+        elif abs(dq) <= 2 and abs(di) <= 2 and not recent_anom:
+            kind = "NOMINAL"
         else:
             kind = "VARIANCE"
 

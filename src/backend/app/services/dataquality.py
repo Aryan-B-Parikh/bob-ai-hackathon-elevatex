@@ -58,30 +58,29 @@ class NormalisationEngine:
 
 
 def compute_terminal_quality(session: Session) -> None:
-    """Compute a simplistic completeness percentage per terminal.
+    """Compute data-completeness per terminal (Module D).
 
-    Completeness is defined as the proportion of vessel calls belonging to the
-    terminal that have non‑null ``imo`` and ``voyage_number``. This is a placeholder
-    implementation – replace with the real rule‑set as needed.
+    Completeness = share of the terminal's vessel calls with every identity field
+    populated (``imo`` + ``voyage_number`` + a usable ETA). Vessels are attributed
+    via ``Terminal.zone_code == VesselCall.dest_zone_code`` — the audit (B-9) caught
+    the previous version joining on ``Terminal.code``, which never matches a ``Z-*``
+    zone code and therefore always reported a self-fulfilling 100%.
     """
-    # Get all terminal codes
-    terminal_codes = [t.code for t in session.query(Terminal).all()]
-    for code in terminal_codes:
-        total = session.query(VesselCall).filter(VesselCall.dest_zone_code == code).count()
+    for code, zone in {t.code: t.zone_code for t in session.query(Terminal).all()}.items():
+        total = session.query(VesselCall).filter(VesselCall.dest_zone_code == zone).count()
         if total == 0:
-            completeness = 100.0
-            missing = []
+            completeness, missing = 0.0, ["vessel_calls"]
         else:
             good = session.query(VesselCall).filter(
-                VesselCall.dest_zone_code == code,
+                VesselCall.dest_zone_code == zone,
                 VesselCall.imo.is_not(None),
                 VesselCall.voyage_number.is_not(None),
             ).count()
             completeness = round(100.0 * good / total, 2)
             missing = []
-            if session.query(VesselCall).filter(VesselCall.dest_zone_code == code, VesselCall.imo.is_(None)).count() > 0:
+            if session.query(VesselCall).filter(VesselCall.dest_zone_code == zone, VesselCall.imo.is_(None)).count() > 0:
                 missing.append("imo")
-            if session.query(VesselCall).filter(VesselCall.dest_zone_code == code, VesselCall.voyage_number.is_(None)).count() > 0:
+            if session.query(VesselCall).filter(VesselCall.dest_zone_code == zone, VesselCall.voyage_number.is_(None)).count() > 0:
                 missing.append("voyage_number")
         # Upsert TerminalQuality
         terminal_id = session.query(Terminal.id).filter(Terminal.code == code).scalar()

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Berth, Crane, Gate, Terminal, YardZone, VesselScheduleUpload
+from ..models import Berth, Crane, EtaRevision, Gate, Terminal, VesselCall, YardZone, VesselScheduleUpload
 from ..serialize import terminal_to_dict, vessel_to_dict
 from ..services import pipeline
 from ..pipelines.schedule import parse_schedule
@@ -64,61 +64,81 @@ def hotspots(db: Session = Depends(get_db)):
 @router.post("/vessels/upload")
 async def upload_schedule(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """CSV/EDI vessel-schedule upload (Module B).
-    Parses CSV, dedupes on IMO+voyage_number, records upload audit.
-    Returns: {accepted, rejected, errors, revisions_created, upload_id, filename, bytes, stub}
+
+    Parses the CSV, **creates real `VesselCall` rows** with an `EtaRevision`
+    carrier-declaration history entry (audit B-1: the previous version only wrote
+    an audit row and created nothing), dedupes on IMO+voyage_number, and reports
+    an audit that adds up: ``accepted + rejected == rows`` (audit B-2).
     """
     raw = await file.read()
+    errors: list[str] = []
+    rows = parsed_rejected = accepted = revisions_created = 0
+
     try:
-        rows = parse_schedule(raw)
-    except Exception as exc:
-        # parsing error, record as rejected
-        upload = VesselScheduleUpload(
-            filename=file.filename,
-            rows=0,
-            accepted=0,
-            rejected=0,
-            report={"errors": [str(exc)], "created": []},
+        parsed = parse_schedule(raw)
+    except Exception as exc:  # whole-file rejection (bad header/encoding)
+        upload = VesselScheduleUpload(filename=file.filename, rows=0, accepted=0,
+                                      rejected=0, report={"errors": [str(exc)], "created": []})
+        db.add(upload); db.commit(); db.refresh(upload)
+        return {"accepted": 0, "rejected": 0, "errors": [str(exc)], "revisions_created": 0,
+                "upload_id": upload.id, "filename": file.filename, "bytes": len(raw), "stub": False}
+
+    rows = parsed["rows"]
+    parsed_rejected = len(parsed["rejected"])
+
+    zone_by_code = {t.zone_code: t for t in db.execute(select(Terminal)).scalars().all()}
+    existing_keys = {(v.imo, v.voyage_number) for v in db.execute(select(VesselCall)).scalars().all()}
+
+    created: list[dict] = []
+    for r in parsed["accepted"]:
+        imo, voyage = (r.get("imo") or "").strip(), (r.get("voyage_number") or "").strip()
+        key = (imo, voyage)
+        if key in existing_keys or key in {(c.get("imo"), c.get("voyage_number")) for c in created}:
+            errors.append(f"duplicate skipped: {imo}/{voyage}")
+            continue
+        zone = (r.get("dest_zone_code") or "").strip()
+        if zone and zone not in zone_by_code:
+            errors.append(f"unknown dest_zone_code {zone!r} for {imo}/{voyage}")
+            continue
+        vc = VesselCall(
+            imo=imo, voyage_number=voyage,
+            mmsi=(r.get("mmsi") or "").strip() or None,
+            name=(r.get("name") or "").strip() or f"Uploaded {imo}",
+            carrier=(r.get("carrier") or "").strip() or "Unknown",
+            vessel_class=(r.get("vessel_class") or "").strip() or "PANAMAX",
+            loa_ft=int(float(r.get("loa_ft") or 964)),
+            beam_ft=int(float(r.get("beam_ft") or 124)),
+            draft_ft=float(r.get("draft_ft") or 45.0),
+            teu_capacity=int(float(r.get("teu_capacity") or 5000)),
+            import_moves=int(float(r.get("import_moves") or 2000)),
+            export_moves=int(float(r.get("export_moves") or 1800)),
+            origin_port=(r.get("origin_port") or "").strip() or "Unknown",
+            reefer_units=int(float(r.get("reefer_units") or 0)),
+            status="INBOUND",
+            anchorage_zone="En route — San Pedro Approach",
+            declared_eta_hours=float(r["declared_eta_hours"]),
+            ais_eta_hours=None,
+            etd_hours=float(r["declared_eta_hours"]) + 26.0,
+            anchored_hours=0.0,
+            dest_zone_code=zone or "Z-LBCT",
+            data_confidence=0.8,      # manually supplied data, not measured
+            unresolved=False,
         )
-        db.add(upload)
-        db.commit()
-        db.refresh(upload)
-        return {
-            "accepted": 0,
-            "rejected": 0,
-            "errors": [str(exc)],
-            "revisions_created": 0,
-            "upload_id": upload.id,
-            "filename": file.filename,
-            "bytes": len(raw),
-            "stub": False,
-        }
-    # dedupe on IMO + voyage_number
-    seen = set()
-    deduped = []
-    for r in rows:
-        key = (r.get("imo"), r.get("voyage_number"))
-        if key not in seen:
-            seen.add(key)
-            deduped.append(r)
-    accepted = len(deduped)
-    # audit record
-    upload = VesselScheduleUpload(
-        filename=file.filename,
-        rows=len(rows),
-        accepted=accepted,
-        rejected=len(rows) - accepted,
-        report={"errors": [], "created": deduped},
-    )
+        db.add(vc)
+        db.flush()
+        db.add(EtaRevision(vessel_call_id=vc.id, source="CARRIER",
+                           eta_hours=vc.declared_eta_hours, note="uploaded schedule"))
+        revisions_created += 1
+        created.append({"imo": imo, "voyage_number": voyage})
+        accepted += 1
+
+    rejected = parsed_rejected + (rows - parsed_rejected - accepted)
+    upload = VesselScheduleUpload(filename=file.filename, rows=rows, accepted=accepted,
+                                  rejected=rejected,
+                                  report={"errors": errors, "created": created})
     db.add(upload)
     db.commit()
     db.refresh(upload)
-    return {
-        "accepted": accepted,
-        "rejected": len(rows) - accepted,
-        "errors": [],
-        "revisions_created": 0,
-        "upload_id": upload.id,
-        "filename": file.filename,
-        "bytes": len(raw),
-        "stub": False,
-    }
+    return {"accepted": accepted, "rejected": rejected, "errors": errors,
+            "revisions_created": revisions_created, "upload_id": upload.id,
+            "filename": file.filename, "bytes": len(raw), "stub": False}
