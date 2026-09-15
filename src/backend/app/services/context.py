@@ -1,8 +1,4 @@
-"""Engine context — loads the DB into plain dataclasses shared by every service.
-
-One shared model time ``t0`` (the newest congestion observation) so forecasting,
-optimisation, routing and planning all reason about the same "now".
-"""
+"""Shared engine context loaded from PostgreSQL."""
 
 from __future__ import annotations
 
@@ -23,10 +19,12 @@ class TerminalCtx:
     berth_length_ft: int; deepsea_berths: int; gantry_cranes: int; capacity_teu_m: float | None
     zone_code: str; note: str | None
 
+
 @dataclass
 class BerthCtx:
     id: int; name: str; seq: int; length_ft: int; depth_ft: float; cranes_max: int
-    terminal_code: str; terminal_name: str; pier: str; zone_code: str
+    terminal_code: str; terminal_name: str; pier: str; zone_code: str; reach_ft: float = 210.0
+
 
 @dataclass
 class VesselCtx:
@@ -40,9 +38,11 @@ class VesselCtx:
     @property
     def total_moves(self) -> int: return self.import_moves + self.export_moves
 
+
 @dataclass
 class HistoryPoint:
     ts: datetime; hours_ago: int; queue_count: int; avg_wait_hours: float; index: float; yard_util_pct: float | None
+
 
 @dataclass
 class EngineContext:
@@ -65,13 +65,20 @@ def zone_capacity(ctx: EngineContext, zone_code: str) -> dict:
 
 def _context_fingerprint(observations, vessels, cranes, yards, gates, terminals, berths) -> str:
     h = hashlib.sha256()
-    for o in observations: h.update(f"O|{o.id}|{o.source}|{o.ts.isoformat()}|{o.hours_ago}|{o.queue_count}|{o.avg_wait_hours}|{o.index}|{o.yard_util_pct}\n".encode())
-    for v in vessels: h.update(f"V|{v.id}|{v.imo}|{v.status}|{v.declared_eta_hours}|{v.ais_eta_hours}|{v.dest_zone_code}|{v.import_moves}|{v.export_moves}|{v.reefer_units}\n".encode())
-    for c in cranes: h.update(f"C|{c.id}|{c.terminal_id}|{c.status}|{c.rated_moves_per_hour}\n".encode())
-    for y in yards: h.update(f"Y|{y.id}|{y.terminal_id}|{y.ground_slots_teu}|{y.used_teu}\n".encode())
-    for g in gates: h.update(f"G|{g.id}|{g.terminal_id}|{g.queue_len}|{g.trucks_per_hour}\n".encode())
-    for t in terminals: h.update(f"T|{t.id}|{t.config_version}|{t.berth_length_ft}|{t.deepsea_berths}|{t.gantry_cranes}\n".encode())
-    for b in berths: h.update(f"B|{b.id}|{b.length_ft}|{b.depth_ft}|{b.cranes_max}\n".encode())
+    for o in observations:
+        h.update(f"O|{o.id}|{o.source}|{o.ts.isoformat()}|{o.hours_ago}|{o.queue_count}|{o.avg_wait_hours}|{o.index}|{o.yard_util_pct}\n".encode())
+    for v in vessels:
+        h.update(f"V|{v.id}|{v.imo}|{v.status}|{v.declared_eta_hours}|{v.ais_eta_hours}|{v.dest_zone_code}|{v.import_moves}|{v.export_moves}|{v.reefer_units}|{v.loa_ft}|{v.beam_ft}|{v.draft_ft}\n".encode())
+    for c in cranes:
+        h.update(f"C|{c.id}|{c.terminal_id}|{c.status}|{c.rated_moves_per_hour}|{c.reach_ft}\n".encode())
+    for y in yards:
+        h.update(f"Y|{y.id}|{y.terminal_id}|{y.ground_slots_teu}|{y.used_teu}\n".encode())
+    for g in gates:
+        h.update(f"G|{g.id}|{g.terminal_id}|{g.queue_len}|{g.trucks_per_hour}\n".encode())
+    for t in terminals:
+        h.update(f"T|{t.id}|{t.config_version}|{t.berth_length_ft}|{t.deepsea_berths}|{t.gantry_cranes}\n".encode())
+    for b in berths:
+        h.update(f"B|{b.id}|{b.length_ft}|{b.depth_ft}|{b.cranes_max}\n".encode())
     return h.hexdigest()[:20]
 
 
@@ -84,15 +91,28 @@ def load_context(db: Session) -> EngineContext:
     yards = db.execute(select(YardZone).order_by(YardZone.id)).scalars().all()
     gates = db.execute(select(Gate).order_by(Gate.id)).scalars().all()
     term_by_id = {t.id: t for t in terminals}
-    berth_ctx = [BerthCtx(b.id, b.name, b.seq, b.length_ft, b.depth_ft, b.cranes_max, term_by_id[b.terminal_id].code, term_by_id[b.terminal_id].name, term_by_id[b.terminal_id].pier, term_by_id[b.terminal_id].zone_code) for b in berths]
-    vessel_ctx = [VesselCtx(v.id, v.mmsi, v.imo, v.name, v.carrier, v.vessel_class, v.loa_ft, v.beam_ft, v.draft_ft, v.teu_capacity, v.import_moves, v.export_moves, v.origin_port, v.reefer_units, v.status, v.anchorage_zone, v.declared_eta_hours, v.ais_eta_hours, v.anchored_hours, v.dest_zone_code, v.data_confidence, v.unresolved) for v in vessels]
+    reach_by_terminal = {}
+    for c in cranes:
+        reach_by_terminal[c.terminal_id] = max(reach_by_terminal.get(c.terminal_id, 0.0), float(c.reach_ft or 0.0))
+    berth_ctx = [BerthCtx(
+        b.id, b.name, b.seq, b.length_ft, b.depth_ft, b.cranes_max,
+        term_by_id[b.terminal_id].code, term_by_id[b.terminal_id].name,
+        term_by_id[b.terminal_id].pier, term_by_id[b.terminal_id].zone_code,
+        reach_by_terminal.get(b.terminal_id, 210.0),
+    ) for b in berths]
+    vessel_ctx = [VesselCtx(v.id, v.mmsi, v.imo, v.name, v.carrier, v.vessel_class, v.loa_ft, v.beam_ft,
+                             v.draft_ft, v.teu_capacity, v.import_moves, v.export_moves, v.origin_port,
+                             v.reefer_units, v.status, v.anchorage_zone, v.declared_eta_hours, v.ais_eta_hours,
+                             v.anchored_hours, v.dest_zone_code, v.data_confidence, v.unresolved) for v in vessels]
     history: dict[str, list[HistoryPoint]] = {}
-    for o in observations: history.setdefault(o.zone_code, []).append(HistoryPoint(o.ts, o.hours_ago, o.queue_count, o.avg_wait_hours, o.index, o.yard_util_pct))
+    for o in observations:
+        history.setdefault(o.zone_code, []).append(HistoryPoint(o.ts, o.hours_ago, o.queue_count, o.avg_wait_hours, o.index, o.yard_util_pct))
     latest = max((o.ts for o in observations), default=datetime.utcnow())
     avail = {}
     for c in cranes:
         code = term_by_id[c.terminal_id].code
-        if c.status == "AVAILABLE": avail[code] = avail.get(code, 0) + 1
+        if c.status == "AVAILABLE":
+            avail[code] = avail.get(code, 0) + 1
     yard_util = {}
     for term in terminals:
         zs = [y for y in yards if y.terminal_id == term.id]; cap = sum(y.ground_slots_teu for y in zs) or 1; used = sum(y.used_teu for y in zs)
@@ -100,7 +120,9 @@ def load_context(db: Session) -> EngineContext:
     gate_queue = {term_by_id[g.terminal_id].code: g.queue_len for g in gates}
     source = observations[0].source if observations else "DEMO_AIS"
     data_version = _context_fingerprint(observations, vessels, cranes, yards, gates, terminals, berths)
-    return EngineContext(t0=latest, terminals=terminals, berths=berth_ctx, vessels=vessel_ctx, history=history, cranes=avail, yard_util=yard_util, gate_queue=gate_queue, dataset_source=source, data_version=data_version)
+    return EngineContext(t0=latest, terminals=terminals, berths=berth_ctx, vessels=vessel_ctx,
+                         history=history, cranes=avail, yard_util=yard_util, gate_queue=gate_queue,
+                         dataset_source=source, data_version=data_version)
 
 
 __all__ = ["EngineContext", "TerminalCtx", "BerthCtx", "VesselCtx", "HistoryPoint", "load_context", "zone_capacity", "ref"]
