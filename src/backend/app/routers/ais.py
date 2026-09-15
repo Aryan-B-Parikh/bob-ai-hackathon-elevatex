@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import tempfile
 from pathlib import Path
 
@@ -40,15 +41,17 @@ async def ais_import(file: UploadFile = File(...), db: Session = Depends(get_db)
     raw = await file.read()
     if len(raw) > _MAX_BYTES:
         raise HTTPException(status_code=413, detail="AIS file too large: maximum 50 MB")
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=415, detail="NOAA AccessAIS import requires a CSV file")
     raw_path = series_path = None
     try:
         from ..pipelines import ais as ais_pipeline
-        with tempfile.NamedTemporaryFile(mode="wb", suffix=Path(file.filename or "ais.csv").suffix or ".csv", delete=False) as raw_f:
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".csv", delete=False) as raw_f:
             raw_f.write(raw); raw_path = raw_f.name
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as series_f:
             series_path = series_f.name
         build_stats = ais_pipeline.build(raw_path, series_path, min_anchor_min=5.0, sog_max=1.0)
-        dataset_id = f"NOAA-{Path(file.filename or 'AIS').stem}-{build_stats['vessels']}-{build_stats['output_rows']}"
+        dataset_id = f"NOAA-{hashlib.sha256(raw).hexdigest()[:24]}"
         track_stats = ais_pipeline.persist_tracks(raw_path, dataset_id=dataset_id, sog_max=1.0)
         import_stats = ais_pipeline.import_series(series_path, source="AIS", is_measured=True)
         db.expire_all()
