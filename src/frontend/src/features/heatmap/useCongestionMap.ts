@@ -53,5 +53,5 @@ export function useCongestionMap() {
   const setMode = (mode: "CURRENT" | "FORECAST") => setFilterState((prev) => ({ ...prev, mode }));
   const toggleLayer = (layer: keyof MapFilterState["layers"]) => setFilterState((prev) => ({ ...prev, layers: { ...prev.layers, [layer]: !prev.layers[layer] } }));
 
-  return { terminals: enrichedTerminals, filteredTerminals, selectedTerminal, terminalVessels, anchorages, filterState, setSelectedTerminalCode, setHorizon, setSeverityFilter, setMode, toggleLayer, isLoading: overviewLoading || terminalsLoading || vesselsLoading, error: overviewError || terminalsError };
+  return { terminals: enrichedTerminals, filteredTerminals, selectedTerminal, terminalVessels, anchorages, filterState, datasetSource: (overview as any)?.dataset?.source ?? "UNKNOWN", setSelectedTerminalCode, setHorizon, setSeverityFilter, setMode, toggleLayer, isLoading: overviewLoading || terminalsLoading || vesselsLoading, error: overviewError || terminalsError };
 }
