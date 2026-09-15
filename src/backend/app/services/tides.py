@@ -4,10 +4,14 @@ San Pedro Bay has a semidiurnal tide (~12.42 h period, ~5–6 ft range). A vesse
 whose draft exceeds a berth's charted depth can only **enter/leave at high water**,
 so its berthing START must fall inside a tidal window.
 
-Model (documented assumption):
+Primary source — NOAA CO-OPS (non-fatal):
+    fetch_noaa_tides() calls the NOAA Tides & Currents API for station 9410660
+    (Los Angeles, San Pedro Bay) and writes observed + predicted water-level rows
+    into the TidalWindow table labelled ``noaa-coops``.  Requires no API key.
+    Endpoint: https://api.tidesandcurrents.noaa.gov/api/prod/datagetter
 
+Fallback — harmonic model:
     depth_ft(berth, t) = design_depth_ft + A·cos(2π (t − phase) / 12.42)
-
     A     = TIDE_AMPLITUDE_FT (2.8 ft, mid-range for the bay)
     phase = deterministic per berth (spreads the windows along the waterfront)
     margin= UNDER_KEEL_MARGIN_FT (1.0 ft) required to transit a berth
@@ -26,16 +30,33 @@ stability; the meaning is documented here and everywhere the column is read/writ
 
 from __future__ import annotations
 
+import logging
 import math
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
+import httpx
 from sqlalchemy import select
+
+LOGGER = logging.getLogger(__name__)
 
 TIDE_PERIOD_H = 12.42
 TIDE_AMPLITUDE_FT = 2.8
 UNDER_KEEL_MARGIN_FT = 1.0
 HARMONIC_NOTE = "harmonic-model"   # marks a modelled (not observed) tide row
+NOAA_NOTE = "noaa-coops"           # marks a row sourced from NOAA CO-OPS API
+
+# NOAA CO-OPS station 9410660 — Los Angeles / San Pedro Bay
+# Charted depth at design datum (MLLW); tidal amplitude converts water level
+# above/below MLLW into effective depth for a given berth.
+NOAA_STATION_ID = "9410660"
+NOAA_API_BASE = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
+# MLLW datum depth correction: design_depth_ft is given at MLLW, so water level
+# above MLLW directly adds to passable depth.
+NOAA_PRODUCT_PREDICTIONS = "predictions"
+NOAA_DATUM = "MLLW"
+NOAA_UNITS = "english"   # feet
+NOAA_TIME_ZONE = "GMT"
 
 
 def _phase_hours(berth_id: int) -> float:
@@ -83,6 +104,106 @@ def _db_overrides() -> dict[int, dict[int, float]]:
 def invalidate_cache() -> None:
     """Drop the cached override map (call after ensure_windows / any TidalWindow write)."""
     _db_overrides.cache_clear()
+
+
+def fetch_noaa_tides(db, horizon_hours: int = 96, t0: datetime | None = None) -> int:
+    """Fetch NOAA CO-OPS tidal predictions for San Pedro Bay and persist as TidalWindow rows.
+
+    Calls the NOAA Tides & Currents API (station 9410660, no API key required) for the
+    next ``horizon_hours`` of hourly water-level predictions referenced to MLLW datum.
+    Each row's ``min_depth_ft`` = design_depth_ft + water_level_ft (the effective passable
+    depth at that hour for a berth whose chart depth is at MLLW).
+
+    Rows are labelled ``NOAA_NOTE`` and replace any existing ``noaa-coops`` rows for the
+    same berths and hours.  The harmonic model rows remain untouched as a fallback.
+
+    Returns the number of TidalWindow rows written, or 0 on any API failure (non-fatal).
+    """
+    from ..models import Berth, TidalWindow
+
+    base_ts = (t0 or datetime.now(timezone.utc)).replace(minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    end_ts = base_ts + timedelta(hours=horizon_hours)
+
+    try:
+        resp = httpx.get(
+            NOAA_API_BASE,
+            params={
+                "station": NOAA_STATION_ID,
+                "product": NOAA_PRODUCT_PREDICTIONS,
+                "begin_date": base_ts.strftime("%Y%m%d %H:%M"),
+                "end_date": end_ts.strftime("%Y%m%d %H:%M"),
+                "datum": NOAA_DATUM,
+                "time_zone": NOAA_TIME_ZONE,
+                "interval": "h",
+                "units": NOAA_UNITS,
+                "application": "PortFlowSBX",
+                "format": "json",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001 — non-fatal; harmonic model stays
+        LOGGER.warning("NOAA CO-OPS fetch failed (non-fatal, harmonic model used): %s", exc)
+        return 0
+
+    predictions = data.get("predictions", [])
+    if not predictions:
+        LOGGER.warning("NOAA CO-OPS returned no predictions for station %s", NOAA_STATION_ID)
+        return 0
+
+    # Build hour → water_level_ft lookup
+    wl: dict[int, float] = {}
+    for p in predictions:
+        try:
+            ts = datetime.strptime(p["t"], "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+            hour_offset = int(round((ts - base_ts).total_seconds() / 3600.0))
+            if 0 <= hour_offset <= horizon_hours:
+                wl[hour_offset] = float(p["v"])
+        except (KeyError, ValueError):
+            continue
+
+    if not wl:
+        LOGGER.warning("NOAA CO-OPS: could not parse any prediction rows")
+        return 0
+
+    berths = db.execute(select(Berth)).scalars().all()
+    # Remove stale noaa-coops rows for these berths
+    try:
+        from sqlalchemy import delete as sa_delete
+        from ..models import TidalWindow as TW
+        db.execute(sa_delete(TW).where(TW.note == NOAA_NOTE))
+    except Exception:  # noqa: BLE001
+        pass
+
+    written = 0
+    for b in berths:
+        for hour, water_level_ft in wl.items():
+            # effective depth = design depth (at MLLW) + water level above MLLW
+            effective_depth = round(b.depth_ft + water_level_ft, 3)
+            db.add(TidalWindow(
+                berth_id=b.id,
+                ts=base_ts + timedelta(hours=hour),
+                hours_ago=hour,
+                min_depth_ft=effective_depth,
+                note=NOAA_NOTE,
+            ))
+            written += 1
+
+    try:
+        db.commit()
+        invalidate_cache()
+        LOGGER.info("NOAA CO-OPS: wrote %d TidalWindow rows (%d hours × %d berths)",
+                    written, len(wl), len(berths))
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("NOAA CO-OPS: DB write failed: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 0
+
+    return written
 
 
 def ensure_windows(db, horizon_hours: int = 96, t0: datetime | None = None,

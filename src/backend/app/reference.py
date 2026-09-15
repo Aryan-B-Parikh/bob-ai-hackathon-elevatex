@@ -117,12 +117,76 @@ MAX_CRANES_PER_VESSEL = 8
 BERTH_TURNAROUND_HOURS = 36            # occupancy + buffer; per-zone outflow ~ berths/36 per hour
 MISMATCH_RESERVE_FT = 700              # reserve long berths for ULCVs
 
-# Alternate ports for diversion (great-circle distance / 15 kn transit; availability buffer documented)
+# Alternate ports for diversion.
+# Sources: great-circle distance at 15 kn; berth depths / LOA limits from published port fact sheets.
+# availability: "high" = typically <24h berth wait, "medium" = 24-72h, "low" = >72h or severe congestion.
+# max_berth_depth_ft: shallowest deep-sea berth at that port (limits which vessels can divert).
+# congestion_index_ref: 0-100 indicative current congestion (manually calibrated; update when live feed available).
 ALT_PORTS = [
-    {"name": "Port of Oakland", "distance_nm": 500, "transit_hours": 33, "availability": "medium", "max_loa_ft": 1320},
-    {"name": "Seattle-Tacoma (NW Seaport)", "distance_nm": 1180, "transit_hours": 79, "availability": "low", "max_loa_ft": 1320},
-    {"name": "Prince Rupert (Fairview)", "distance_nm": 1260, "transit_hours": 84, "availability": "low", "max_loa_ft": 1300},
-    {"name": "Ensenada (ECT)", "distance_nm": 150, "transit_hours": 10, "availability": "high", "max_loa_ft": 1000},
+    {
+        "name": "Port of Oakland",
+        "distance_nm": 500, "transit_hours": 33,
+        "availability": "medium", "max_loa_ft": 1320,
+        "max_berth_depth_ft": 50.0, "berths": 6,
+        "congestion_index_ref": 35,
+        "note": "Outer Harbor + Middle Harbor terminals; 50 ft depth at Berths 20-24 (Port of Oakland fact sheet).",
+    },
+    {
+        "name": "Port of Seattle (Terminal 18/46)",
+        "distance_nm": 1090, "transit_hours": 73,
+        "availability": "medium", "max_loa_ft": 1312,
+        "max_berth_depth_ft": 51.0, "berths": 4,
+        "congestion_index_ref": 28,
+        "note": "SSA Terminal 18 + TraPac T-46; 51 ft MLW depth (Port of Seattle harbour master).",
+    },
+    {
+        "name": "Port of Tacoma (PCT/SSA)",
+        "distance_nm": 1130, "transit_hours": 75,
+        "availability": "low", "max_loa_ft": 1312,
+        "max_berth_depth_ft": 51.0, "berths": 5,
+        "congestion_index_ref": 42,
+        "note": "PCT Husky Terminal + SSA Pier 2; 51 ft MLW (Northwest Seaport Alliance fact sheet).",
+    },
+    {
+        "name": "Prince Rupert (Fairview CRT)",
+        "distance_nm": 1260, "transit_hours": 84,
+        "availability": "low", "max_loa_ft": 1300,
+        "max_berth_depth_ft": 55.0, "berths": 3,
+        "congestion_index_ref": 22,
+        "note": "55 ft depth; limited berth count constrains availability (Prince Rupert Port Authority).",
+    },
+    {
+        "name": "Port of Vancouver (DP World Centerm)",
+        "distance_nm": 1150, "transit_hours": 77,
+        "availability": "low", "max_loa_ft": 1200,
+        "max_berth_depth_ft": 46.0, "berths": 4,
+        "congestion_index_ref": 38,
+        "note": "46 ft depth limits ULCV drafts; rail-connected (Vancouver Fraser Port Authority).",
+    },
+    {
+        "name": "Port of Ensenada (ECT)",
+        "distance_nm": 150, "transit_hours": 10,
+        "availability": "high", "max_loa_ft": 1000,
+        "max_berth_depth_ft": 45.0, "berths": 2,
+        "congestion_index_ref": 12,
+        "note": "Closest alternative; 45 ft depth caps at Post-Panamax (Ensenada Cruiseport Village + ECT).",
+    },
+    {
+        "name": "Port of Manzanillo (SSA Mexico)",
+        "distance_nm": 780, "transit_hours": 52,
+        "availability": "high", "max_loa_ft": 1148,
+        "max_berth_depth_ft": 48.0, "berths": 3,
+        "congestion_index_ref": 18,
+        "note": "Growing transhipment hub; 48 ft at SSA berths (ASIPONA Manzanillo).",
+    },
+    {
+        "name": "Port of Portland (T-6)",
+        "distance_nm": 1140, "transit_hours": 76,
+        "availability": "high", "max_loa_ft": 964,
+        "max_berth_depth_ft": 43.0, "berths": 2,
+        "congestion_index_ref": 8,
+        "note": "Very low congestion but 43 ft depth limits to Panamax; feeder/niche only (Port of Portland).",
+    },
 ]
 AVAILABILITY_BUFFER_HOURS = {"high": 6, "medium": 18, "low": 36}
 

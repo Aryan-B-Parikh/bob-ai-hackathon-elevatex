@@ -30,24 +30,13 @@ async def lifespan(app: FastAPI):
             from .seed import seed
             seed()
 
-        # Replace DEMO_AIS synthetic history with realistic AIS-format data on first boot
-        # (or when the congestion table is empty / still has DEMO_AIS source).
-        # Non-fatal: if it fails the SimPy seed data is still usable.
-        try:
-            from .models import CongestionObservation
-            source = db.execute(
-                select(CongestionObservation.source)
-                .order_by(CongestionObservation.id.desc())
-                .limit(1)
-            ).scalars().first()
-            if source in (None, "DEMO_AIS"):
-                print("[startup] generating realistic AIS history (replacing DEMO_AIS)…")
-                from .pipelines.ais_generate import generate_and_load
-                stats = generate_and_load(days=14, seed=20240817)
-                print(f"[startup] AIS history: {stats.get('inserted', 0)} observations, "
-                      f"source=AIS (was {source or 'empty'})")
-        except Exception as _ae:  # noqa: BLE001
-            print(f"[startup] AIS generation skipped (non-fatal): {_ae}")
+        # NOTE: Auto-replace of SimPy history with AIS-generated data is intentionally
+        # disabled here.  The ais_generate pipeline concentrates all vessels in 2 anchorage
+        # rectangles, causing Z-LBCT and Z-TTI to receive zero queue records which collapses
+        # LightGBM feature importances and breaks forecast drivers.  The SimPy layer
+        # (source="DEMO_AIS") produces balanced per-zone variance needed for training.
+        # Use POST /api/ais/generate or `python -m app.pipelines.ais_generate` to
+        # opt-in to AIS data manually once zone assignment is corrected.
 
         # Refresh weather on every startup so forecasting has the latest Open-Meteo data.
         # Non-fatal: if network is unavailable the forecast falls back to weather_used=False.

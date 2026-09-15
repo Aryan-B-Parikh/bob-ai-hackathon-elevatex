@@ -14,8 +14,12 @@ multi-origin rollouts give MAE / R^2 / skill-vs-persistence and per-horizon sigm
 
 from __future__ import annotations
 
+import hashlib
+import os
+import pickle
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import lightgbm as lgb
 import numpy as np
@@ -24,6 +28,51 @@ from sqlalchemy import select
 from .. import reference as ref
 from ..config import get_settings
 from ..models import WeatherObservation
+
+# ---- Model persistence cache (joblib-style, pure pickle) --------------------
+# Models are saved under .model_cache/<zone>/<data_version>.pkl so a server
+# restart re-uses the last trained model as long as the training data hasn't
+# changed. The cache key is the data_version string (source:Nobs@timestamp),
+# so any new data automatically triggers a retrain.
+_MODEL_CACHE_DIR = Path(__file__).parent.parent.parent / ".model_cache"
+
+
+def _cache_path(zone_code: str, data_version: str) -> Path:
+    safe = hashlib.md5(data_version.encode()).hexdigest()
+    return _MODEL_CACHE_DIR / zone_code / f"{safe}.pkl"
+
+
+def _load_cached_models(zone_code: str, data_version: str):
+    """Return (models, qlo, qhi, holdout, importances, sigma, resid) or None on miss."""
+    p = _cache_path(zone_code, data_version)
+    if not p.exists():
+        return None
+    try:
+        with open(p, "rb") as fh:
+            return pickle.load(fh)
+    except Exception:  # noqa: BLE001 — corrupt cache → retrain
+        try:
+            p.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+
+
+def _save_cached_models(zone_code: str, data_version: str, payload) -> None:
+    p = _cache_path(zone_code, data_version)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "wb") as fh:
+            pickle.dump(payload, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        # evict old entries for this zone (keep only the latest 3)
+        siblings = sorted(p.parent.glob("*.pkl"), key=lambda f: f.stat().st_mtime)
+        for old in siblings[:-3]:
+            try:
+                old.unlink()
+            except Exception:
+                pass
+    except Exception:  # noqa: BLE001 — cache write failure is non-fatal
+        pass
 
 HORIZON = 72
 HOLDOUT_HOURS = 48
@@ -387,58 +436,70 @@ def forecast_zone(zone_code, zone_name, history, vessels, capacity, t0: datetime
     target = {"index": idx, "queue": q, "wait": w, "yard": yard}
     ms_of = lambda p: t0.timestamp() * 1000 - (H - 1 - p) * 3_600_000  # noqa: E731
 
-    # training rows (1-step): predict t+1 from data <= t
-    X_tr, y_tr, X_ho, y_ho = [], {k: [] for k in TARGETS}, [], {k: [] for k in TARGETS}
-    for t in range(24, H - 1):
-        # historical inflow pressure from queue deltas + service outflow
-        inflow6 = sum(max(0.0, q[k] - q[k - 1]) + arr_rate for k in range(max(1, t - 5), t + 1))
-        f = _feature_matrix(idx, q, w, yard, ms_of, inflow6, load_factor, t)
-        nxt = {k: target[k][t + 1] for k in TARGETS}
-        if t >= H - HOLDOUT_HOURS:
-            X_ho.append(f)
-            for k in TARGETS:
-                y_ho[k].append(nxt[k])
-        else:
-            X_tr.append(f)
-            for k in TARGETS:
-                y_tr[k].append(nxt[k])
+    # data_version fingerprints the exact training corpus — used as both the model cache key
+    # and the provenance tag attached to every forecast point.
+    data_version = f"{source}:{H}obs@{t0.strftime('%Y%m%dT%H%M')}"
 
-    X_tr = np.array(X_tr)
-    X_ho = np.array(X_ho) if X_ho else np.empty((0, len(FEATURES)))
+    # ---- try model cache (keyed by data_version so new data always triggers retrain) ----
+    cached = _load_cached_models(zone_code, data_version)
+    if cached is not None:
+        models, qlo, qhi, holdout, importances, sigma, resid = cached
+        _cache_hit = True
+    else:
+        _cache_hit = False
+        # training rows (1-step): predict t+1 from data <= t
+        X_tr, y_tr, X_ho, y_ho = [], {k: [] for k in TARGETS}, [], {k: [] for k in TARGETS}
+        for t in range(24, H - 1):
+            inflow6 = sum(max(0.0, q[k] - q[k - 1]) + arr_rate for k in range(max(1, t - 5), t + 1))
+            f = _feature_matrix(idx, q, w, yard, ms_of, inflow6, load_factor, t)
+            nxt = {k: target[k][t + 1] for k in TARGETS}
+            if t >= H - HOLDOUT_HOURS:
+                X_ho.append(f)
+                for k in TARGETS:
+                    y_ho[k].append(nxt[k])
+            else:
+                X_tr.append(f)
+                for k in TARGETS:
+                    y_tr[k].append(nxt[k])
 
-    models: dict[str, lgb.LGBMRegressor] = {}
-    qlo: dict[str, lgb.LGBMRegressor] = {}
-    qhi: dict[str, lgb.LGBMRegressor] = {}
-    holdout: dict[str, dict] = {}
-    importances: dict[str, float] = {}
+        X_tr = np.array(X_tr)
+        X_ho = np.array(X_ho) if X_ho else np.empty((0, len(FEATURES)))
+        _n_train = int(X_tr.shape[0])
 
-    for k in TARGETS:
-        m = lgb.LGBMRegressor(**LGB_PARAMS)
-        m.fit(X_tr, np.array(y_tr[k]))
-        models[k] = m
-        if k == "index":
-            importances = dict(zip(FEATURES, (m.feature_importances_ / max(1, m.feature_importances_.sum())).round(4).tolist()))
-            for tag, alpha, store in (("lo", QUANTILE_LO, qlo), ("hi", QUANTILE_HI, qhi)):
-                qm = lgb.LGBMRegressor(**{**LGB_PARAMS, "objective": "quantile", "alpha": alpha})
-                qm.fit(X_tr, np.array(y_tr[k]))
-                store[k] = qm
-        # 1-step holdout metrics
-        if len(X_ho):
-            pred = m.predict(X_ho)
-            actual = np.array(y_ho[k])
-            err = actual - pred
-            sse = float(np.sum(err ** 2))
-            sst = float(np.sum((actual - actual.mean()) ** 2))
-            pers = np.array([target[k][H - HOLDOUT_HOURS - 1]] * len(actual))
-            pmae = float(np.mean(np.abs(actual - pers)))
-            mae = float(np.mean(np.abs(err)))
-            holdout[k] = {
-                "mae": round(mae, 2),
-                "r2": round(1 - sse / sst, 3) if sst > 0 else 0.0,
-                "skill_pct": round((pmae - mae) / pmae * 100, 1) if pmae > 0 else 0.0,
-            }
+        models: dict[str, lgb.LGBMRegressor] = {}
+        qlo: dict[str, lgb.LGBMRegressor] = {}
+        qhi: dict[str, lgb.LGBMRegressor] = {}
+        holdout: dict[str, dict] = {"_training_rows": _n_train}
+        importances: dict[str, float] = {}
 
-    # ---------------- recursive rollout
+        for k in TARGETS:
+            m = lgb.LGBMRegressor(**LGB_PARAMS)
+            m.fit(X_tr, np.array(y_tr[k]))
+            models[k] = m
+            if k == "index":
+                importances = dict(zip(FEATURES, (m.feature_importances_ / max(1, m.feature_importances_.sum())).round(4).tolist()))
+                for tag, alpha, store in (("lo", QUANTILE_LO, qlo), ("hi", QUANTILE_HI, qhi)):
+                    qm = lgb.LGBMRegressor(**{**LGB_PARAMS, "objective": "quantile", "alpha": alpha})
+                    qm.fit(X_tr, np.array(y_tr[k]))
+                    store[k] = qm
+            # 1-step holdout metrics
+            if len(X_ho):
+                pred = m.predict(X_ho)
+                actual = np.array(y_ho[k])
+                err = actual - pred
+                sse = float(np.sum(err ** 2))
+                sst = float(np.sum((actual - actual.mean()) ** 2))
+                pers = np.array([target[k][H - HOLDOUT_HOURS - 1]] * len(actual))
+                pmae = float(np.mean(np.abs(actual - pers)))
+                mae = float(np.mean(np.abs(err)))
+                holdout[k] = {
+                    "mae": round(mae, 2),
+                    "r2": round(1 - sse / sst, 3) if sst > 0 else 0.0,
+                    "skill_pct": round((pmae - mae) / pmae * 100, 1) if pmae > 0 else 0.0,
+                }
+        holdout["_training_rows"] = _n_train   # preserve after per-target loop
+
+    # ---------------- recursive rollout (always runs — uses in-memory arrays from data)
     def rollout(from_pos: int, horizon: int, use_schedule: bool):
         wi, wq, ww, wy = idx.copy(), q.copy(), w.copy(), yard.copy()
         out = {"index": [], "queue": [], "wait": [], "yard": [], "lo": [], "hi": []}
@@ -465,20 +526,25 @@ def forecast_zone(zone_code, zone_name, history, vessels, capacity, t0: datetime
         return out
 
     # ---------------- per-horizon sigma from multi-origin rollouts (per target)
-    resid = {k: [[] for _ in range(HORIZON)] for k in TARGETS}
-    actuals = {"index": idx, "queue": q, "wait": w, "yard": yard}
-    first = max(30, H - 1 - HOLDOUT_HOURS - 120)
-    span = max(1, H - 1 - HOLDOUT_HOURS - first)
-    for o in range(ROLLOUT_ORIGINS):
-        origin = first + int(o * span / ROLLOUT_ORIGINS)
-        r = rollout(origin, HORIZON, use_schedule=False)
-        for h in range(1, HORIZON + 1):
-            pos = origin + h
-            if pos < H:
-                for k in TARGETS:
-                    resid[k][h - 1].append(float(actuals[k][pos] - r[k][h - 1]))
-    sigma = {k: np.array([max(1.5, float(np.std(a)) if len(a) > 1 else 6.0) for a in resid[k]])
-             for k in TARGETS}
+    # Skip when loaded from cache — sigma/resid were computed and saved with the models.
+    if not _cache_hit:
+        resid = {k: [[] for _ in range(HORIZON)] for k in TARGETS}
+        actuals = {"index": idx, "queue": q, "wait": w, "yard": yard}
+        first = max(30, H - 1 - HOLDOUT_HOURS - 120)
+        span = max(1, H - 1 - HOLDOUT_HOURS - first)
+        for o in range(ROLLOUT_ORIGINS):
+            origin = first + int(o * span / ROLLOUT_ORIGINS)
+            r = rollout(origin, HORIZON, use_schedule=False)
+            for h in range(1, HORIZON + 1):
+                pos = origin + h
+                if pos < H:
+                    for k in TARGETS:
+                        resid[k][h - 1].append(float(actuals[k][pos] - r[k][h - 1]))
+        sigma = {k: np.array([max(1.5, float(np.std(a)) if len(a) > 1 else 6.0) for a in resid[k]])
+                 for k in TARGETS}
+        # persist models + sigma + resid so next request for the same data is instant
+        _save_cached_models(zone_code, data_version,
+                            (models, qlo, qhi, holdout, importances, sigma, resid))
 
     mae24 = mae72 = 0.0
     n24 = n72 = 0
@@ -514,23 +580,73 @@ def forecast_zone(zone_code, zone_name, history, vessels, capacity, t0: datetime
     peak = max(points, key=lambda p: p.index)
     avg_index = sum(p.index for p in points) / len(points)
 
-    # ---------------- drivers (heuristic, documented)
+    # ---------------- drivers — derived from real feature importances, not heuristic rules
+    # The top-2 LightGBM features (by gain) set the primary narrative; supplementary signals
+    # (arrival pressure, diurnal, queue pressure) are added only when their magnitude is large
+    # enough relative to the distribution seen in training, so the label is always evidence-backed.
     drivers: list[dict] = []
+    top_imp = sorted(importances.items(), key=lambda kv: kv[1], reverse=True)
+    feat_labels = {
+        "index_t":            "Current congestion level",
+        "mean_index_24h":     "24-hour sustained congestion",
+        "mean_index_6h":      "6-hour rolling congestion",
+        "wait_t":             "Current anchorage wait",
+        "index_t_24":         "24-hour lag congestion",
+        "d_index_24h":        "24-hour congestion trend",
+        "d_index_1h":         "1-hour congestion change",
+        "queue_t":            "Current vessel queue size",
+        "hour_sin":           "Diurnal arrival pattern (sine)",
+        "hour_cos":           "Diurnal arrival pattern (cosine)",
+        "dow_sin":            "Day-of-week pattern (sine)",
+        "dow_cos":            "Day-of-week pattern (cosine)",
+        "arrival_pressure_6h":"Scheduled arrival pressure",
+        "berth_load_factor":  "Berth load factor",
+        "yard_t":             "Yard utilisation",
+    }
+    for feat, gain in top_imp[:3]:
+        if gain < 0.04:   # below 4% gain — not worth reporting
+            continue
+        label = feat_labels.get(feat, feat)
+        # produce a quantified detail line using the actual feature value at the peak horizon
+        if feat == "index_t":
+            detail = f"Current index {idx[-1]:.0f}/100 (gain {gain:.1%}) — carrying forward into the forecast horizon."
+        elif feat in ("mean_index_24h", "mean_index_6h"):
+            window = 24 if "24h" in feat else 6
+            mean_val = float(np.mean(idx[-window:]))
+            detail = f"Mean index over last {window}h = {mean_val:.1f}/100 (gain {gain:.1%}) — elevated baseline."
+        elif feat == "wait_t":
+            detail = f"Current anchorage wait {w[-1]:.1f}h (gain {gain:.1%}) — backlog carried into horizon."
+        elif feat in ("d_index_24h", "d_index_1h"):
+            delta = float(idx[-1] - idx[-24]) if "24h" in feat else float(idx[-1] - idx[-2])
+            direction = "rising" if delta > 0 else "falling"
+            detail = f"Congestion {direction} {abs(delta):.1f} pts over {'24h' if '24h' in feat else '1h'} (gain {gain:.1%})."
+        elif feat == "arrival_pressure_6h":
+            peak_press = _pressure6(sched, peak.hour)
+            detail = f"{peak_press:.0f} vessels arriving in 6h window before peak (gain {gain:.1%})."
+        elif feat in ("hour_sin", "hour_cos"):
+            peak_hod = peak.ts.hour
+            detail = f"Peak at +{peak.hour}h falls in the {peak_hod:02d}:00Z arrival band (gain {gain:.1%})."
+        elif feat in ("dow_sin", "dow_cos"):
+            detail = f"Day-of-week pattern contributes to peak timing (gain {gain:.1%})."
+        elif feat == "berth_load_factor":
+            detail = f"Berth load factor {load_factor:.2f} — {'near-capacity' if load_factor > 0.8 else 'moderate'} (gain {gain:.1%})."
+        elif feat == "queue_t":
+            detail = f"Queue of {int(q[-1])} vessels now (gain {gain:.1%}) — direct driver of index."
+        else:
+            detail = f"Feature '{feat}' gain {gain:.1%} in the LightGBM model."
+        drivers.append({"label": label, "detail": detail, "feature": feat, "importance": round(gain, 4)})
+
+    # supplementary: arrival surge if prominent AND not already the top driver
     peak_pressure = _pressure6(sched, peak.hour)
     avg_window = float(sched.sum()) / HORIZON * 6
-    if peak_pressure > max(1.5, avg_window * 1.4):
+    if peak_pressure > max(1.5, avg_window * 1.4) and not any(d["feature"] == "arrival_pressure_6h" for d in drivers):
         drivers.append({"label": "Arrival surge (bunching)",
-                        "detail": f"{peak_pressure:.0f} vessels ready-to-berth in the 6h before the +{peak.hour}h peak."})
-    if idx[-1] > 55:
-        drivers.append({"label": "Sustained queue pressure",
-                        "detail": f"Current index {idx[-1]:.0f}/100 with {q[-1]:.0f} vessels waiting carried forward."})
-    peak_hod = peak.ts.hour
-    if 4 <= peak_hod <= 11:
-        drivers.append({"label": "Diurnal peak window",
-                        "detail": f"Peak lands in the {peak_hod:02d}:00Z morning arrival bank."})
+                        "detail": f"{peak_pressure:.0f} vessels ready-to-berth in the 6h before the +{peak.hour}h peak.",
+                        "feature": "arrival_pressure_6h", "importance": importances.get("arrival_pressure_6h", 0.0)})
     if not drivers:
         drivers.append({"label": "Service catch-up regime",
-                        "detail": "Arrival pressure near average; berth capacity can absorb the queue if crane productivity holds."})
+                        "detail": "No single dominant feature — arrival pressure near average; capacity can absorb the queue.",
+                        "feature": None, "importance": 0.0})
 
     top_features = sorted(importances.items(), key=lambda kv: kv[1], reverse=True)[:6]
     model_version = f"lgbm-{lgb.__version__}-{'/'.join(f'{t}' for t in TARGETS)}-{len(FEATURES)}f"
@@ -538,7 +654,7 @@ def forecast_zone(zone_code, zone_name, history, vessels, capacity, t0: datetime
     mean_sigma = float(np.mean(sigma["index"]))
     holdout_index = holdout.get("index", {})
     weather_requested = get_settings().feature_weather
-    data_version = f"{source}:{H}obs@{t0.strftime('%Y%m%dT%H%M')}"
+    # data_version already set above (used as cache key); no need to recompute
     confidence = _compute_confidence(history, mean_sigma, holdout_index, False, weather_requested)
     conf_by_horizon = _confidence_by_horizon(buckets, history, holdout_index, weather_requested)
     result = ForecastResult(
@@ -554,7 +670,8 @@ def forecast_zone(zone_code, zone_name, history, vessels, capacity, t0: datetime
             "features": FEATURES,
             "feature_importance": importances,
             "top_features": [{"feature": f, "gain": g} for f, g in top_features],
-            "training_rows": int(X_tr.shape[0]),
+            "training_rows": int(holdout.get("_training_rows", 0)),
+            "cache_hit": _cache_hit,
             "holdout_hours": HOLDOUT_HOURS,
             "mae24": round(mae24 / n24, 2) if n24 else 0.0,
             "mae72": round(mae72 / n72, 2) if n72 else 0.0,

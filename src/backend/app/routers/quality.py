@@ -14,24 +14,29 @@ router = APIRouter(prefix="/api", tags=["quality"])
 
 @router.get("/quality")
 def quality(db: Session = Depends(get_db)):
-    """Per-terminal data-completeness score (Module D).
+    """Per-terminal data-completeness score + normalisation status (Module D).
 
-    Audit B-9: vessels are attributed via ``Terminal.zone_code == dest_zone_code``
-    (the previous version joined ``Terminal.code``, which never matches a ``Z-*``
-    zone code and therefore always reported a self-fulfilling 100%).
+    Audit B-9: vessels are attributed via ``Terminal.zone_code == dest_zone_code``.
+    Runs NormalisationEngine.run() on every call to keep normalised column current
+    (schema v2: ft→m, hours→seconds, UTC timestamps).
     """
     from ..models import TerminalQuality
-    from ..services.dataquality import compute_terminal_quality
+    from ..services.dataquality import NormalisationEngine, compute_terminal_quality
 
+    # Run normalisation pass first so completeness reflects current schema version
+    engine = NormalisationEngine(db)
+    normalised_count = engine.run()
     compute_terminal_quality(db)
     stmt = select(Terminal.code, Terminal.name, TerminalQuality.completeness_pct,
                   TerminalQuality.missing, TerminalQuality.rules_version).join(
         TerminalQuality, Terminal.id == TerminalQuality.terminal_id)
     rows = db.execute(stmt).all()
-    terminals = [{"code": code, "name": name, "completeness_pct": pct, "missing": missing or []}
+    terminals = [{"terminal_code": code, "name": name, "completeness_pct": pct,
+                  "missing": missing or [], "rules_version": version or "v2"}
                  for code, name, pct, missing, version in rows]
-    rules_version = rows[0][4] if rows else "v1"
-    return {"terminals": terminals, "rules_version": rules_version, "stub": False}
+    rules_version = rows[0][4] if rows else "v2"
+    return {"terminals": terminals, "rules_version": rules_version,
+            "normalised_rows_updated": normalised_count, "stub": False}
 
 
 @router.post("/weather/refresh")
