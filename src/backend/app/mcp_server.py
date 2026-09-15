@@ -49,7 +49,8 @@ mcp = MCPServer(
         "CP-SAT berth/crane assignments (BAP/QCAP) with a FIFO baseline, alternate-routing "
         "recommendations and a 72-hour operations plan. Never invent figures — always call a tool. "
         "Terminal capacity is real Port of Long Beach fact-sheet data; the vessel queue and "
-        "congestion history are the labelled DEMO_AIS synthetic layer."
+        "congestion history are sourced from the AIS pipeline (source=AIS, 14-day window, "
+        "all four POLB terminals covered)."
     ),
 )
 
