@@ -1,4 +1,4 @@
-"""Bob router — thin wrapper over the shared Bob service (services/bob.py)."""
+"""Bob router — thin wrapper over the shared IBM Bob service."""
 
 from __future__ import annotations
 
@@ -7,15 +7,25 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..db import get_db
 from ..models import ChatMessage
 from ..services import bob as bob_svc
+from ..services import bob_agent, llm
 
 router = APIRouter(prefix="/api", tags=["bob"])
 
 
 class BobBody(BaseModel):
     message: str
+
+
+@router.get("/bob/status")
+def status():
+    settings = get_settings()
+    return {"provider": llm.provider(), "configured": bool(settings.bob_api_key),
+            "cli_available": bob_agent._cli_path() is not None, "mcp": "PortFlow SBX",
+            "tools": 11, "fallback": "deterministic engine-grounded"}
 
 
 @router.get("/bob")
