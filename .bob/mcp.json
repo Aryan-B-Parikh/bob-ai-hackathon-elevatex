@@ -1,11 +1,11 @@
 {
   "mcpServers": {
     "portflow": {
-      "command": "uv",
+      "command": "C:\\Users\\kukad\\.local\\bin\\uv.exe",
       "args": [
         "run",
         "--directory",
-        "E:/bob-ai-hackathon-elevatex/src/backend",
+        "E:\\bob-ai-hackathon-elevatex\\src\\backend",
         "python",
         "-m",
         "app.mcp_server"

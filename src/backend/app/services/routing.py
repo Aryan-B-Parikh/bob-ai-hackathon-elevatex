@@ -93,12 +93,21 @@ def recommend_routing(ctx, forecasts: dict, optimiser_out: dict | None) -> list[
             return _option_detail(ctx, forecasts, v, wait, rule)
         # ------------------------------------------------------------------ DIVERT
         if wait >= DIVERT_WAIT_H and sustained:
-            candidates = [p for p in ref.ALT_PORTS if v.loa_ft <= p["max_loa_ft"] and p["availability"] != "low"]
+            candidates = [
+                p for p in ref.ALT_PORTS
+                if v.loa_ft <= p["max_loa_ft"]
+                and p["availability"] != "low"
+                and v.draft_ft <= p.get("max_berth_depth_ft", 55.0)
+            ]
             best = None
             for p in candidates:
                 shift = max(0.0, p["transit_hours"] + ref.AVAILABILITY_BUFFER_HOURS[p["availability"]] - wait)
                 wait_avoided = max(0.0, wait - shift)
-                savings = (wait_avoided / 24) * ref.DAILY_OP_COST_USD - (shift / 24) * ref.DAILY_OP_COST_USD * 0.35
+                # penalise ports that are themselves congested (congestion_index_ref feeds into economics)
+                congestion_penalty = (p.get("congestion_index_ref", 30) / 100.0) * 0.15 * ref.DAILY_OP_COST_USD
+                savings = ((wait_avoided / 24) * ref.DAILY_OP_COST_USD
+                           - (shift / 24) * ref.DAILY_OP_COST_USD * 0.35
+                           - congestion_penalty)
                 if best is None or savings > best[1]:
                     best = (p, savings, shift, wait_avoided)
             if best and best[1] > 0:

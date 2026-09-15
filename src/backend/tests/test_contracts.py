@@ -64,7 +64,7 @@ def test_quality_shape(client):
     assert {"terminals", "rules_version"} <= set(body)
     assert isinstance(body["terminals"], list)
     for t in body["terminals"]:
-        assert {"code", "name", "completeness_pct", "missing"} <= set(t)
+        assert {"terminal_code", "name", "completeness_pct", "missing"} <= set(t)
 
 
 @requires_db

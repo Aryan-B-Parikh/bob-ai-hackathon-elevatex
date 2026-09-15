@@ -30,24 +30,19 @@ async def lifespan(app: FastAPI):
             from .seed import seed
             seed()
 
-        # Replace DEMO_AIS synthetic history with realistic AIS-format data on first boot
-        # (or when the congestion table is empty / still has DEMO_AIS source).
-        # Non-fatal: if it fails the SimPy seed data is still usable.
+        # Load AIS-generated data on startup if the DB has no AIS observations yet.
+        # The generator now uses all 4 terminal anchor points so every zone receives
+        # balanced vessel records — the zone assignment bug is fixed.
         try:
-            from .models import CongestionObservation
-            source = db.execute(
-                select(CongestionObservation.source)
-                .order_by(CongestionObservation.id.desc())
-                .limit(1)
-            ).scalars().first()
-            if source in (None, "DEMO_AIS"):
-                print("[startup] generating realistic AIS history (replacing DEMO_AIS)…")
+            from sqlalchemy import text
+            ais_count = db.execute(text("SELECT COUNT(*) FROM congestion_observation WHERE source='AIS'")).scalar()
+            if ais_count == 0:
+                print("[startup] no AIS data found — generating synthetic AIS history…")
                 from .pipelines.ais_generate import generate_and_load
                 stats = generate_and_load(days=14, seed=20240817)
-                print(f"[startup] AIS history: {stats.get('inserted', 0)} observations, "
-                      f"source=AIS (was {source or 'empty'})")
+                print(f"[startup] AIS pipeline: {stats}")
         except Exception as _ae:  # noqa: BLE001
-            print(f"[startup] AIS generation skipped (non-fatal): {_ae}")
+            print(f"[startup] AIS pipeline skipped: {_ae}")
 
         # Refresh weather on every startup so forecasting has the latest Open-Meteo data.
         # Non-fatal: if network is unavailable the forecast falls back to weather_used=False.

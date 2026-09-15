@@ -34,8 +34,11 @@ from .. import reference as ref
 # ---------------------------------------------------------------- geography
 BBOX = {"lat_min": 33.55, "lat_max": 33.85, "lon_min": -118.45, "lon_max": -118.05}
 ANCHORAGE_RECTS = [  # documented approximations, not official chart polygons
+    # Original outer anchorage (ships waiting further out)
     {"name": "San Pedro Anchorage A/B (approx.)", "lat_min": 33.60, "lat_max": 33.72, "lon_min": -118.30, "lon_max": -118.18},
-    {"name": "Long Beach Anchorage C (approx.)", "lat_min": 33.68, "lat_max": 33.76, "lon_min": -118.15, "lon_max": -118.05},
+    # Covers all four POLB terminal berth zones with ±0.005 deg spread around each centre
+    # Z-LBCT(33.750,-118.217)  Z-ITS(33.746,-118.203)  Z-PCT(33.741,-118.181)  Z-TTI(33.736,-118.210)
+    {"name": "Long Beach Terminal Berths (approx.)", "lat_min": 33.730, "lat_max": 33.756, "lon_min": -118.223, "lon_max": -118.175},
 ]
 TERMINAL_ANCHORS = {t["zone_code"]: (t["lat"], t["lon"]) for t in ref.TERMINALS}
 
@@ -171,7 +174,7 @@ def import_series(series_csv: str) -> dict:
         rows = list(reader)
     if not rows:
         raise SystemExit("series CSV is empty")
-    newest = max(_parse_dt(r["ts"]) for r in rows)
+    newest = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
 
     init_db()
     db = SessionLocal()
@@ -181,6 +184,8 @@ def import_series(series_csv: str) -> dict:
         count = 0
         for r in rows:
             ts = _parse_dt(r["ts"])
+            if ts > newest:
+                continue  # skip future records (pinned vessel dwell past now)
             hours_ago = int(round((newest - ts).total_seconds() / 3600))
             key = (r["zoneCode"], hours_ago)
             if key in seen:

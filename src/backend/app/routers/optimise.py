@@ -86,18 +86,25 @@ def run_optimise(body: ScenarioBody,
 
 @router.get("/tides")
 def get_tides(hours: int = Query(72, ge=24, le=168), db: Session = Depends(get_db)):
-    """W3: tidal depth curve for every berth (harmonic model, seeded on first call).
+    """W3: tidal depth curve for every berth.
 
-    Returns depth_ft at each integer hour 0..hours for all berths, together with
-    the model constants so the UI can render high-water windows on the Gantt.
-    Calling ensure_windows() here is idempotent — it no-ops if rows already exist.
+    Tries NOAA CO-OPS (station 9410660, San Pedro Bay) first; falls back to the
+    harmonic model if the API is unreachable.  Returns depth_ft at each integer
+    hour 0..hours for all berths, together with the source label so the UI can
+    display whether predictions are from real tide data or the model.
     """
-    tides.ensure_windows(db)
+    # Attempt live NOAA fetch; non-fatal — harmonic fallback activates automatically.
+    noaa_written = tides.fetch_noaa_tides(db, horizon_hours=hours)
+    source = tides.NOAA_NOTE if noaa_written > 0 else tides.HARMONIC_NOTE
+    if noaa_written == 0:
+        tides.ensure_windows(db, horizon_hours=hours)
     berths = db.execute(select(Berth)).scalars().all()
     return {
         "period_hours": tides.TIDE_PERIOD_H,
         "amplitude_ft": tides.TIDE_AMPLITUDE_FT,
         "under_keel_margin_ft": tides.UNDER_KEEL_MARGIN_FT,
+        "source": source,
+        "noaa_rows_written": noaa_written,
         "berths": [
             {
                 "berth_id": b.id,
@@ -107,4 +114,22 @@ def get_tides(hours: int = Query(72, ge=24, le=168), db: Session = Depends(get_d
             }
             for b in berths
         ],
+    }
+
+
+@router.post("/tides/refresh")
+def refresh_tides(hours: int = Query(96, ge=24, le=168), db: Session = Depends(get_db)):
+    """Force a fresh NOAA CO-OPS fetch and replace tidal window rows.
+
+    Returns {source, rows_written, station} — callable from the QualityPage refresh button.
+    """
+    noaa_written = tides.fetch_noaa_tides(db, horizon_hours=hours)
+    if noaa_written == 0:
+        # NOAA unavailable — refresh harmonic model
+        tides.ensure_windows(db, horizon_hours=hours, force=True)
+    return {
+        "source": tides.NOAA_NOTE if noaa_written > 0 else tides.HARMONIC_NOTE,
+        "rows_written": noaa_written if noaa_written > 0 else None,
+        "station": tides.NOAA_STATION_ID,
+        "hours": hours,
     }
