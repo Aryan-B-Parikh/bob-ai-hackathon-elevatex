@@ -1,23 +1,27 @@
-# Demo video script — PortFlow SBX (target 4:30)
+# Demo video script — PortPulse AI (target 4:30)
 
-Recording notes: capture at 1440×900, browser zoom 100%, dark theme. Use `agent-browser record start demo/demo-recording.webm` or any screen recorder. Every number shown is engine-computed — do NOT edit footage to change figures; if a run differs from the script numbers, narrate the live values instead (the engines are deterministic on the seeded dataset).
+Record at 1440×900, browser zoom 100%. Prewarm the application before recording so cached engine requests are fast. Every number shown must come from the running application.
 
-| # | Time | Screen / action | Narration (voice-over) |
-|---|------|-----------------|------------------------|
-| 1 | 0:00–0:25 | Terminal: `bun install && bun run db:push && bun run db:seed && bun run dev` (pre-typed, sped up 4×), then the Overview tab loads | "This is PortFlow SBX — a 72-hour decision cockpit for San Pedro Bay, built for the Bob AI Hackathon L1 challenge. Cold start takes one command per step: schema, deterministic seed, dev server." |
-| 2 | 0:25–0:50 | Overview tab: point at the 8 KPI cards, then the zone congestion grid with sparklines | "The Overview fuses live state: 38 vessels on the berthde — 28 at anchor, 10 inbound — port congestion index, queue and wait times. Each terminal zone carries a 48-hour observed sparkline, so drift is visible before you even open the forecast." |
-| 3 | 0:50–1:30 | Forecast tab: zone selector → Z-LBCT, hover the 80% band, scroll to the model card, then the Model validation card | "The forecast engine is a real schedule-aware ridge regression — 14 features including inbound-ETA arrival pressure — rolled out recursively 72 hours with damped recursion. It validates on a 48-hour holdout plus 12 multi-origin rollouts: R-squared about 0.90, MAE at 72 hours about 5 index points, and +83 percent skill over a persistence baseline. The validation card shows per-horizon MAE, sigma and bias — the uncertainty band is honest, not decorative." |
-| 4 | 1:30–2:15 | Berth & Cranes tab: click "Run optimiser", watch comparison cards update; open the scenario simulator, drag crane availability to 75%, Apply | "The optimiser runs FIFO baseline against a three-phase heuristic — priority selection, ready-time sequencing, swap and gap-insertion — under real POLB constraints: vessel length, draft, crane caps. On the shipped crisis scenario it services 19 vessels, about 10 percent more moves than FIFO. And because 'what if the cranes go down' is the real operational question, the scenario simulator re-runs the whole engine at 75 percent crane availability — you watch throughput fall in seconds, not spreadsheets." |
-| 5 | 2:15–2:45 | Roster: click a vessel row → detail dialog; then click a Gantt block | "Every vessel has a full spec sheet — drafts, reefer plugs, anchored hours — one click away. The Gantt shows the optimised 72-hour schedule per berth, with crane counts per assignment." |
-| 6 | 2:45–3:15 | Routing tab: filter to DIVERT, open one card, click Accept on one recommendation | "The routing engine prices alternatives before ships burn the last leg: divert, slow-steam, priority windows — each with a ranked savings estimate from the 32-thousand-dollar-a-day cost model. This live run estimates about 2.1 million dollars in savings across 38 recommendations. Accepting one removes it from the queue of open decisions." |
-| 7 | 3:15–3:45 | 72-Hr Plan tab: "Regenerate plan", scroll the shift timeline, tick two checklist items, open Raw text dialog, Copy | "The plan generator fuses all three engines into twelve 6-hour shifts — arrivals, berthings, crane deployment, congestion alerts with decide-by deadlines, and supervisor checklists. It's available as printable text for the wall, JSON for systems." |
-| 8 | 3:45–4:15 | Bob AI tab: type "Which vessels should divert and what would we save?" — show the tool chips + engine-grounded badge | "Bob is load-bearing, not a wrapper: it actually calls the forecast, optimiser, routing and plan engines server-side, answers strictly from their JSON, and shows you which tools it ran. If the LLM is unreachable, a deterministic engine-derived fallback answers anyway." |
-| 9 | 4:15–4:30 | Back to Overview; end card over the cover of presentation/slides.pdf | "Predict, reroute, optimise, plan — every number auditable back to an engine. PortFlow SBX. Thank you." |
+| # | Time | Screen / action | Narration |
+|---|---|---|---|
+| 1 | 0:00–0:25 | Open Overview | “This is PortPulse AI — a 72-hour decision cockpit for San Pedro Bay. It connects congestion, vessel arrivals, terminal capacity, berth and crane planning, routing and an agentic IBM Bob interface.” |
+| 2 | 0:25–0:55 | Overview → Congestion | “The command view shows the current queue, congestion risk and the resource causing the bottleneck. The Congestion view adds the spatial heatmap, terminal markers and terminal-to-vessel drill-down.” |
+| 3 | 0:55–1:30 | Forecast → select terminal → uncertainty band → validation | “LightGBM forecasts queue, wait and yard utilisation across 24, 48 and 72 hours with quantile uncertainty. Validation and confidence are visible instead of presenting a single unexplained score.” |
+| 4 | 1:30–2:15 | Berths & Cranes → run optimiser → inspect Gantt → FIFO comparison | “Now the prediction becomes an operational decision. OR-Tools CP-SAT assigns berths, start times and cranes under hard physical constraints including berth dimensions, draft, crane reach, overlap and terminal crane-pool capacity. The result is compared with FIFO.” |
+| 5 | 2:15–2:45 | Scenario Center → reduce crane availability → apply | “We can stress the plan without changing the base data. A crane-availability scenario re-solves the constrained problem and reports the operational impact against baseline.” |
+| 6 | 2:45–3:15 | Routing → open recommendation | “Routing turns forecast congestion into an actionable decision: divert, slow-steam, priority window or hold. Recommendations include sustained-congestion checks, predicted wait and an explicit economic trade-off.” |
+| 7 | 3:15–3:45 | 72-Hour Plan → show shifts + provenance | “The plan fuses forecast, risk, optimisation and routing into twelve six-hour shifts. Every plan carries forecast and optimiser run IDs, model version and confidence so the decision is auditable.” |
+| 8 | 3:45–4:15 | Bob AI → ask: “What is the biggest congestion risk and what should we do?” → show tool chips | “IBM Bob is load-bearing, not decorative. Through MCP it calls the real PortPulse engines, retrieves the computed forecast, risk or optimisation results, and explains them. Bob does not invent the schedule — CP-SAT creates it.” |
+| 9 | 4:15–4:30 | Return to Overview → end card | “PortPulse AI closes the loop: observe, predict, explain risk, optimise, route, plan and act through Bob. Every operational number traces back to an engine.” |
 
-## Shot checklist (before recording)
-- [ ] Fresh `bun run db:seed` so KPIs match script numbers (deterministic seed)
-- [ ] Dark theme active (toggle in header if you previously switched to light)
-- [ ] Overview / Forecast / Berth / Routing / Plan / Bob tabs all pre-loaded once (warms API caches)
-- [ ] Terminal window pre-typed; 4× speed during install steps
-- [ ] Mic levels; or record silent + narrate over edit
-- [ ] Upload, then put the URL in `demo/demo-video-link.txt`
+## Shot checklist
+
+- [ ] Backend and PostgreSQL running
+- [ ] IBM Bob CLI + MCP server registered for the Bob shot
+- [ ] Open-Meteo weather loaded or graceful fallback visible
+- [ ] Overview / Congestion / Forecast / Berth / Scenario / Routing / Plan / Bob opened once to warm caches
+- [ ] Heatmap and Gantt visible
+- [ ] Show at least one FIFO-vs-CP-SAT comparison
+- [ ] Show plan provenance
+- [ ] Show Bob tool-call metadata
+- [ ] Upload the final video and put the hosted URL in `demo/demo-video-link.txt`
