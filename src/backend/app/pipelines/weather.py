@@ -1,18 +1,27 @@
 """Weather pipeline (W1).
 
-Fetches historical + forecast data from Open-Meteo for the reference location
-defined in settings (REFERENCE_LAT/LON). Inserts rows into ``WeatherObservation``
-with a simple cache fallback (if the HTTP request fails, no rows are inserted).
+Fetches wind/gust/visibility from Open-Meteo forecast API (free, no key) and
+wave height from the Open-Meteo marine API (free, no key) for San Pedro Bay
+(33.74N, -118.20W).  Both calls are non-fatal — if either fails the other still
+writes its rows, and the forecast falls back to weather_used=False.
+
+Open-Meteo forecast:  https://api.open-meteo.com/v1/forecast
+Open-Meteo marine:    https://marine-api.open-meteo.com/v1/marine
+
+``hours_ago`` convention (shared with CongestionObservation):
+  * 0 = current hour
+  * -N = N hours ahead (negative = future)
+  * positive values are NOT stored here (only forecast rows are kept)
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List
+from datetime import UTC, datetime
+from typing import Any
 
-import httpx  # std dep (replaces requests: identical call signature, already in pyproject)
+import httpx
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -20,65 +29,125 @@ from ..models import WeatherObservation
 
 LOGGER = logging.getLogger(__name__)
 
+# Forecast endpoint variables (wind/gust/visibility)
+_FORECAST_VARS = "wind_speed_10m,wind_gusts_10m,visibility"
+# Marine endpoint variables (wave height)
+_MARINE_VARS = "wave_height"
 
-def _fetch_open_meteo(params: Dict[str, Any]) -> Dict[str, Any]:
-    settings = get_settings()
-    url = f"{settings.open_meteo_base}/v1/forecast"
-    response = httpx.get(url, params=params, timeout=10)
-    response.raise_for_status()
-    return response.json()
-
-
-def _build_params(hours_ahead: int) -> Dict[str, Any]:
-    settings = get_settings()
-    now = datetime.now(timezone.utc)
-    start = now.isoformat()
-    end = (now + timedelta(hours=hours_ahead)).isoformat()
-    return {
-        "latitude": settings.reference_lat,
-        "longitude": settings.reference_lon,
-        "hourly": "windspeed_10m,gusts_10m,wave_height,visibility",
-        "start": start,
-        "end": end,
-        "timezone": "UTC",
-    }
+# Knot conversion factor (m/s → knots)
+_MS_TO_KN = 1.9438452
 
 
-def run_weather_pipeline(db: Session, hours: int = 72) -> None:
-    """Fetch weather data and persist ``WeatherObservation`` rows.
+def _fetch_forecast(lat: float, lon: float, forecast_days: int, base_url: str) -> dict[str, Any]:
+    """Call the Open-Meteo atmospheric forecast endpoint."""
+    resp = httpx.get(
+        f"{base_url}/v1/forecast",
+        params={
+            "latitude": lat, "longitude": lon,
+            "hourly": _FORECAST_VARS,
+            "forecast_days": forecast_days,
+            "timezone": "UTC",
+            "wind_speed_unit": "ms",
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
-    The Open‑Meteo API returns arrays keyed by hour. For each hour we create a
-    ``WeatherObservation`` entry with ``hours_ago`` relative to the current hour
-    (0 = now, positive = future forecast, negative = past history – but we only
-    store future values here).
+
+def _fetch_marine(lat: float, lon: float, forecast_days: int) -> dict[str, Any]:
+    """Call the Open-Meteo marine API for wave height (separate endpoint, no API key)."""
+    resp = httpx.get(
+        "https://marine-api.open-meteo.com/v1/marine",
+        params={
+            "latitude": lat, "longitude": lon,
+            "hourly": _MARINE_VARS,
+            "forecast_days": forecast_days,
+            "timezone": "UTC",
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def run_weather_pipeline(db: Session, hours: int = 72) -> int:
+    """Fetch Open-Meteo atmospheric + marine data and persist WeatherObservation rows.
+
+    Returns the number of rows written. Performs a full-replace (DELETE then INSERT)
+    since the table is small (< 336 rows) and idempotency matters more than atomicity.
+
+    Wave height is fetched from the marine API in a separate (non-fatal) call so that
+    a marine-API outage never blocks the wind/visibility data.
     """
+    settings = get_settings()
+    forecast_days = max(1, min(16, (hours // 24) + 1))
+
+    # ── Atmospheric fetch (wind, gust, visibility) ──────────────────────────────
     try:
-        params = _build_params(hours)
-        data = _fetch_open_meteo(params)
-        hourly = data.get("hourly", {})
-        timestamps: List[str] = hourly.get("time", [])
-        wind: List[float] = hourly.get("windspeed_10m", [])
-        gust: List[float] = hourly.get("gusts_10m", [])
-        wave: List[float] = hourly.get("wave_height", [])
-        visibility: List[float] = hourly.get("visibility", [])
-        now = datetime.now(timezone.utc)
-        for idx, ts_str in enumerate(timestamps):
-            ts = datetime.fromisoformat(ts_str).replace(tzinfo=timezone.utc)
-            hours_ago = int((ts - now).total_seconds() // 3600)
-            obs = WeatherObservation(
-                ts=ts,
-                hours_ago=hours_ago,
-                wind_kn=wind[idx] if idx < len(wind) else None,
-                gust_kn=gust[idx] if idx < len(gust) else None,
-                wave_m=wave[idx] if idx < len(wave) else None,
-                visibility_km=visibility[idx] if idx < len(visibility) else None,
-                source="OPEN_METEO",
-                confidence=0.9,
-            )
-            db.add(obs)
-        db.commit()
-        LOGGER.info("Weather pipeline inserted %d rows", len(timestamps))
-    except Exception as exc:
-        LOGGER.error("Weather pipeline failed: %s", exc)
-        # Cache fallback: do nothing – the endpoint can signal ``weather_used=False``
-        db.rollback()
+        atm = _fetch_forecast(settings.reference_lat, settings.reference_lon,
+                              forecast_days, settings.open_meteo_base)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("Weather pipeline (forecast) failed (non-fatal): %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 0
+
+    hourly = atm.get("hourly", {})
+    timestamps: list[str] = hourly.get("time", [])
+    if not timestamps:
+        LOGGER.warning("Open-Meteo returned no hourly timestamps")
+        return 0
+
+    wind_ms: list[Any] = hourly.get("wind_speed_10m", [])
+    gust_ms: list[Any] = hourly.get("wind_gusts_10m", [])
+    vis_m: list[Any] = hourly.get("visibility", [])
+
+    # ── Marine fetch (wave height) — non-fatal ───────────────────────────────────
+    wave_m: list[Any] = []
+    try:
+        marine = _fetch_marine(settings.reference_lat, settings.reference_lon, forecast_days)
+        wave_m = marine.get("hourly", {}).get("wave_height", [])
+        LOGGER.info("Weather pipeline (marine): got %d wave_height values", len(wave_m))
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("Weather pipeline (marine) failed (non-fatal, wave_m will be None): %s", exc)
+
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+
+    # Full replace: delete old weather rows then insert fresh ones
+    db.execute(delete(WeatherObservation))
+
+    def _safe(lst: list, i: int, scale: float = 1.0) -> float | None:
+        v = lst[i] if i < len(lst) else None
+        return round(float(v) * scale, 2) if v is not None else None
+
+    count = 0
+    for idx, ts_str in enumerate(timestamps):
+        if idx >= hours:
+            break
+        try:
+            ts = datetime.fromisoformat(ts_str).replace(tzinfo=UTC)
+        except ValueError:
+            continue
+        hours_ago = int(round((ts - now).total_seconds() / 3600.0))
+        # Only store forecast (hours_ago <= 0) within the requested window
+        if hours_ago > 0 or hours_ago < -hours:
+            continue
+
+        db.add(WeatherObservation(
+            ts=ts,
+            hours_ago=hours_ago,
+            wind_kn=_safe(wind_ms, idx, _MS_TO_KN),
+            gust_kn=_safe(gust_ms, idx, _MS_TO_KN),
+            wave_m=_safe(wave_m, idx),            # None when marine API unavailable
+            visibility_km=_safe(vis_m, idx, 0.001),  # m → km
+            source="OPEN_METEO",
+            confidence=0.85,
+        ))
+        count += 1
+
+    db.commit()
+    LOGGER.info("Weather pipeline: inserted %d rows (Open-Meteo)", count)
+    return count

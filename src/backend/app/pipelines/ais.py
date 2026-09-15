@@ -25,10 +25,9 @@ from __future__ import annotations
 
 import argparse
 import csv
-import math
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from .. import reference as ref
 
@@ -65,7 +64,7 @@ def _zone_for(lat: float, lon: float) -> str:
 def _parse_dt(s: str) -> datetime:
     s = s.strip().replace(" UTC", "")
     dt = datetime.fromisoformat(s)
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
 def _header_map(fieldnames: list[str]) -> dict[str, str]:

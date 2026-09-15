@@ -1,132 +1,388 @@
-// Berth & Cranes tab. Owner: W4. (W3 adds tidal/incremental + extended scenarios.)
-import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
-import { Card, ErrorBox, Kpi, Loading, useAsync } from "../components/ui";
+// Berth & Cranes tab — CP-SAT BAP/QCAP with tidal windows, incremental re-solve,
+// scenario-compare table (CP-SAT vs FIFO side-by-side), and binding constraint column.
+import React, { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Waves, Zap, RotateCcw, Play, BarChart2 } from "lucide-react";
+import { api } from "../lib/api";
+import { SkeletonCard } from "../components/ui/Skeleton";
+import { ErrorState } from "../components/ui/ErrorState";
+
+function fmtDelta(val: number | undefined | null, unit = ""): React.ReactNode {
+  if (val == null) return <span className="text-[var(--text-muted)]">—</span>;
+  const sign = val > 0 ? "+" : "";
+  const color = val < 0 ? "var(--status-success)" : val > 0 ? "var(--status-critical)" : "var(--text-muted)";
+  return <span className="font-mono font-semibold" style={{ color }}>{sign}{val}{unit}</span>;
+}
+
+function DeltaTag({ val }: { val: number | undefined }) {
+  if (val == null) return null;
+  const color = val < 0 ? "var(--status-success)" : val > 0 ? "var(--status-critical)" : "var(--text-muted)";
+  const sign = val > 0 ? "+" : "";
+  return <span className="font-mono text-[10px]" style={{ color }}>{sign}{val}</span>;
+}
+
+function KpiCard({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
+  return (
+    <div className="p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)]">
+      <div className="text-[10px] uppercase font-bold text-[var(--text-muted)] tracking-wider">{label}</div>
+      <div className="font-mono font-bold text-lg text-[var(--text-primary)] mt-0.5">{value}</div>
+      {sub && <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+// ── Scenario compare table ────────────────────────────────────────────────────
+function ScenarioCompare({ opt }: { opt: any }) {
+  if (!opt?.metrics || !opt?.baseline) return null;
+  const m = opt.metrics;
+  const b = opt.baseline;
+
+  const rows = [
+    { label: "Vessels serviced",    cpsat: m.serviced,           fifo: b.serviced,           unit: "",    lowerBetter: false },
+    { label: "Deferred",            cpsat: m.deferred,           fifo: b.deferred,           unit: "",    lowerBetter: true  },
+    { label: "Total wait (h)",      cpsat: m.total_wait_hours,   fifo: b.total_wait_hours,   unit: "h",   lowerBetter: true  },
+    { label: "Avg wait (h)",        cpsat: m.avg_wait_hours,     fifo: b.avg_wait_hours,     unit: "h",   lowerBetter: true  },
+    { label: "Max wait (h)",        cpsat: m.max_wait_hours,     fifo: b.max_wait_hours,     unit: "h",   lowerBetter: true  },
+    { label: "Weighted wait (h)",   cpsat: m.weighted_wait_hours,fifo: b.weighted_wait_hours,unit: "h",   lowerBetter: true  },
+    { label: "Makespan (h)",        cpsat: m.makespan_hours,     fifo: b.makespan_hours,     unit: "h",   lowerBetter: true  },
+    { label: "Berth util (%)",      cpsat: m.berth_util_pct,     fifo: b.berth_util_pct,     unit: "%",   lowerBetter: false },
+    { label: "Crane util (%)",      cpsat: m.crane_util_pct,     fifo: b.crane_util_pct,     unit: "%",   lowerBetter: false },
+    { label: "Moves served",        cpsat: m.total_moves,        fifo: b.total_moves,        unit: "",    lowerBetter: false },
+    { label: "Avg cranes/vessel",   cpsat: m.avg_cranes_per_vessel, fifo: b.avg_cranes_per_vessel, unit: "", lowerBetter: false },
+  ];
+
+  return (
+    <div className="p-4 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)]">
+      <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+        <BarChart2 className="w-4 h-4 text-[var(--brand)]" />
+        Scenario comparison — CP-SAT vs FIFO baseline
+      </h3>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[480px] text-xs">
+          <thead>
+            <tr className="text-[10px] text-[var(--text-muted)] uppercase border-b border-[var(--border-default)]">
+              <th className="text-left py-1.5 pr-4 font-bold">Metric</th>
+              <th className="text-right pr-4 font-bold">CP-SAT</th>
+              <th className="text-right pr-4 font-bold">FIFO</th>
+              <th className="text-right font-bold">Δ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ label, cpsat, fifo, unit, lowerBetter }) => {
+              const delta = cpsat != null && fifo != null
+                ? Math.round((cpsat - fifo) * 10) / 10
+                : null;
+              const improved = delta != null && (lowerBetter ? delta < 0 : delta > 0);
+              const worse    = delta != null && (lowerBetter ? delta > 0 : delta < 0);
+              return (
+                <tr key={label} className="border-t border-[var(--border-subtle)]">
+                  <td className="py-1 pr-4 text-[var(--text-secondary)]">{label}</td>
+                  <td className="text-right pr-4 font-mono font-semibold"
+                    style={{ color: improved ? "var(--status-success)" : worse ? "var(--status-critical)" : "var(--text-primary)" }}>
+                    {cpsat != null ? `${cpsat}${unit}` : "—"}
+                  </td>
+                  <td className="text-right pr-4 font-mono text-[var(--text-muted)]">
+                    {fifo != null ? `${fifo}${unit}` : "—"}
+                  </td>
+                  <td className="text-right font-mono">
+                    {fmtDelta(delta, unit)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[10px] text-[var(--text-muted)] mt-2">
+        Green Δ = CP-SAT improvement over FIFO. Objective weights: {Object.entries(opt.weights || {}).map(([k, v]) => `${k}=${v}`).join(" · ")}
+      </p>
+    </div>
+  );
+}
+
+const MAX_HOUR = 96;
 
 export default function BerthCranes() {
-  const { data: terms } = useAsync(api.terminals);
-  const { data: latest, loading } = useAsync(api.optimiseLatest);
-  const [run, setRun] = useState<any>(null);
-  const [busy, setBusy] = useState(false);
+  const qc = useQueryClient();
   const [crane, setCrane] = useState(1.0);
   const [rate, setRate] = useState(28);
-  const initial = useRef<any>(null);
-  useEffect(() => { if (latest) initial.current = latest; }, [latest]);
-  const opt = run ?? latest;
+  const [useTidal, setUseTidal] = useState(true);
+  const [useIncremental, setUseIncremental] = useState(false);
+  const [scenarioRun, setScenarioRun] = useState<any>(null);
 
-  async function apply() {
-    setBusy(true);
-    try { setRun(await api.optimise({ crane_factor: crane, move_rate_per_crane_hour: rate })); }
-    finally { setBusy(false); }
-  }
+  const { data: terms } = useQuery({ queryKey: ["terminals"], queryFn: () => api.terminals(), staleTime: 300_000 });
+  const { data: latest, isLoading } = useQuery({ queryKey: ["optimise-latest"], queryFn: () => api.optimiseLatest(), staleTime: 120_000 });
+  const { data: tides } = useQuery({ queryKey: ["tides"], queryFn: () => fetch("/api/tides").then((r) => r.json()), staleTime: 3_600_000 });
 
-  const maxHour = 96;
+  const opt = scenarioRun ?? latest;
+
+  const solveMutation = useMutation({
+    mutationFn: () => api.optimise({
+      crane_factor: crane,
+      move_rate_per_crane_hour: rate,
+      incremental: useIncremental,
+      tidal: useTidal,
+    }),
+    onSuccess: (data) => {
+      setScenarioRun(data);
+      qc.invalidateQueries({ queryKey: ["optimise-latest"] });
+    },
+  });
+
   return (
     <div className="space-y-4">
-      <Card>
-        <div className="flex flex-wrap items-end gap-4 sm:gap-6">
+      {/* Controls panel */}
+      <div className="p-4 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)]">
+        <div className="flex flex-wrap items-end gap-5">
+          {/* Crane slider */}
           <div className="w-full xs:w-auto">
-            <div className="muted text-xs mb-1">Crane availability: <b className="accent">{Math.round(crane * 100)}%</b></div>
-            <input type="range" min={0.5} max={1} step={0.05} value={crane} onChange={(e) => setCrane(+e.target.value)} className="w-full xs:w-48 sm:w-56" />
+            <div className="text-xs text-[var(--text-muted)] mb-1">
+              Crane availability: <b className="text-[var(--accent)] font-mono">{Math.round(crane * 100)}%</b>
+            </div>
+            <input type="range" min={0.5} max={1} step={0.05} value={crane}
+              onChange={(e) => setCrane(+e.target.value)}
+              className="w-full xs:w-52 cursor-pointer accent-[var(--brand)]" />
           </div>
-          <div className="w-full xs:w-auto">
-            <div className="muted text-xs mb-1">STS productivity: <b className="accent">{rate} moves/crane-h</b></div>
-            <input type="range" min={20} max={35} step={1} value={rate} onChange={(e) => setRate(+e.target.value)} className="w-full xs:w-48 sm:w-56" />
-          </div>
-          <button onClick={apply} disabled={busy} className="w-full xs:w-auto px-3.5 py-1.5 rounded-md text-xs font-semibold bg-[var(--brand)] hover:bg-[var(--brand-hover)] text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50">
-            {busy ? "Solving CP-SAT…" : "Run scenario"}
-          </button>
-          {opt && <span className="muted text-xs w-full sm:w-auto break-words">solver <b className="accent">{opt.solver}</b> · {opt.status} · {opt.solve_ms}ms · tidal_feasible {String(opt.tidal_feasible)}</span>}
-        </div>
-      </Card>
 
-      {loading && <Loading what="Solving berth/crane plan" />}
+          {/* Rate slider */}
+          <div className="w-full xs:w-auto">
+            <div className="text-xs text-[var(--text-muted)] mb-1">
+              STS productivity: <b className="text-[var(--accent)] font-mono">{rate} moves/crane·h</b>
+            </div>
+            <input type="range" min={20} max={35} step={1} value={rate}
+              onChange={(e) => setRate(+e.target.value)}
+              className="w-full xs:w-52 cursor-pointer accent-[var(--brand)]" />
+          </div>
+
+          {/* Toggles */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs select-none">
+              <input type="checkbox" checked={useTidal} onChange={(e) => setUseTidal(e.target.checked)}
+                className="accent-[var(--brand)] cursor-pointer" />
+              <Waves className="w-3.5 h-3.5 text-[var(--brand)]" />
+              Tidal windows
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs select-none">
+              <input type="checkbox" checked={useIncremental} onChange={(e) => setUseIncremental(e.target.checked)}
+                className="accent-[var(--brand)] cursor-pointer" />
+              <Zap className="w-3.5 h-3.5 text-[var(--accent)]" />
+              Incremental (warm-start)
+            </label>
+          </div>
+
+          {/* Buttons */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => solveMutation.mutate()}
+              disabled={solveMutation.isPending}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold bg-[var(--brand)] hover:bg-[var(--brand-hover)] text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <Play className="w-3 h-3" />
+              {solveMutation.isPending ? "Solving CP-SAT…" : "Run scenario"}
+            </button>
+            {scenarioRun && (
+              <button
+                onClick={() => setScenarioRun(null)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border border-[var(--border-default)] hover:border-[var(--border-elevated)] cursor-pointer transition-colors"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Reset
+              </button>
+            )}
+          </div>
+
+          {opt && (
+            <div className="text-[10px] font-mono text-[var(--text-muted)] w-full sm:w-auto">
+              <span className="text-[var(--accent)] font-semibold">{opt.solver}</span> · {opt.status} · {opt.solve_ms}ms
+              {opt.tidal_feasible != null && <> · tidal_feasible: <span className={opt.tidal_feasible ? "text-[var(--status-success)]" : "text-[var(--status-critical)]"}>{String(opt.tidal_feasible)}</span></>}
+              {opt.incremental && <> · <span className="text-[var(--accent)]">incremental</span></>}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {isLoading && <SkeletonCard />}
+
+      {solveMutation.isError && (
+        <div className="p-3 rounded-lg border border-[var(--status-critical)] bg-[var(--status-critical-bg)] text-xs text-[var(--status-critical)]">
+          CP-SAT solve failed: {String((solveMutation.error as Error)?.message ?? solveMutation.error)}
+        </div>
+      )}
 
       {opt && (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3">
-            <Kpi label="Serviced" value={opt.metrics.serviced} sub={`FIFO ${opt.baseline.serviced} · deferred ${opt.metrics.deferred}`} />
-            <Kpi label="Total wait" value={`${opt.metrics.total_wait_hours}h`} sub={`FIFO ${opt.baseline.total_wait_hours}h (Δ ${opt.deltas.wait_total}h)`} tone="var(--accent)" />
-            <Kpi label="Weighted wait" value={`${opt.metrics.weighted_wait_hours}h`} sub={`FIFO ${opt.baseline.weighted_wait_hours}h`} />
-            <Kpi label="Makespan" value={`${opt.metrics.makespan_hours}h`} sub={`FIFO ${opt.baseline.makespan_hours}h`} />
-            <Kpi label="Berth util" value={`${opt.metrics.berth_util_pct}%`} sub={`FIFO ${opt.baseline.berth_util_pct}%`} />
-            <Kpi label="Crane util" value={`${opt.metrics.crane_util_pct}%`} sub={`FIFO ${opt.baseline.crane_util_pct}%`} />
-            <Kpi label="Moves served" value={Number(opt.metrics.total_moves).toLocaleString()} sub={`FIFO ${Number(opt.baseline.total_moves).toLocaleString()}`} />
-            <Kpi label="Avg cranes/vessel" value={opt.metrics.avg_cranes_per_vessel} sub={`FIFO ${opt.baseline.avg_cranes_per_vessel}`} />
+          {/* KPI grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <KpiCard label="Serviced" value={opt.metrics?.serviced} sub={<>FIFO {opt.baseline?.serviced} · deferred <span className="text-[var(--status-warning)]">{opt.metrics?.deferred}</span></>} />
+            <KpiCard label="Total wait" value={<>{opt.metrics?.total_wait_hours}h <DeltaTag val={opt.deltas?.wait_total} /></>} sub={`FIFO ${opt.baseline?.total_wait_hours}h`} />
+            <KpiCard label="Makespan" value={`${opt.metrics?.makespan_hours}h`} sub={`FIFO ${opt.baseline?.makespan_hours}h`} />
+            <KpiCard label="Berth util" value={`${opt.metrics?.berth_util_pct}%`} sub={`FIFO ${opt.baseline?.berth_util_pct}%`} />
+            <KpiCard label="Crane util" value={`${opt.metrics?.crane_util_pct}%`} sub={`FIFO ${opt.baseline?.crane_util_pct}%`} />
+            <KpiCard label="Moves served" value={Number(opt.metrics?.total_moves).toLocaleString()} sub={`FIFO ${Number(opt.baseline?.total_moves).toLocaleString()}`} />
+            <KpiCard label="Weighted wait" value={`${opt.metrics?.weighted_wait_hours}h`} sub={`FIFO ${opt.baseline?.weighted_wait_hours}h`} />
+            <KpiCard label="Avg cranes/vessel" value={opt.metrics?.avg_cranes_per_vessel} sub={`FIFO ${opt.baseline?.avg_cranes_per_vessel}`} />
           </div>
 
-          <Card>
-            <h3 className="font-semibold mb-1">72h berth Gantt (CP-SAT assignments)</h3>
-            <div className="muted text-xs mb-3">objective weights: {Object.entries(opt.weights || {}).map(([k, v]) => `${k}=${v}`).join(" · ")}</div>
-            <div className="overflow-x-auto">
-              <div style={{ minWidth: 900 }}>
-                {Object.entries(
-                  (opt.assignments || []).reduce((acc: any, a: any) => {
-                    (acc[`${a.terminal_code} ${a.berth_name}`] ||= []).push(a);
-                    return acc;
-                  }, {})
-                ).sort().map(([berth, list]: any) => (
-                  <div key={berth} className="flex items-center gap-2 py-1">
-                    <div className="mono text-xs" style={{ width: 110 }}>{berth}</div>
-                    <div className="relative flex-1" style={{ height: 22, background: "var(--bg-surface-elevated)", border: "1px solid var(--border-subtle)", borderRadius: 6 }}>
-                      {list.map((a: any, i: number) => (
-                        <div key={i} title={`${a.vessel_name} · +${a.start_hour}→${a.end_hour}h · ${a.cranes} cranes`}
-                          className="absolute top-0 h-full text-[10px] flex items-center justify-center font-medium"
-                          style={{
-                            left: `${(a.start_hour / maxHour) * 100}%`,
-                            width: `${Math.max(1.2, ((a.end_hour - a.start_hour) / maxHour) * 100)}%`,
-                            background: "var(--brand-soft)", border: "1px solid var(--brand-border)", borderRadius: 4,
-                            color: "var(--text-primary)", overflow: "hidden",
-                          }}>
-                          {a.vessel_name.replace("M/V ", "")} ×{a.cranes}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+          {/* Scenario compare — CP-SAT vs FIFO side-by-side */}
+          <ScenarioCompare opt={opt} />
+
+          {/* 72h Gantt */}
+          <div className="p-4 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)]">
+            <div className="flex items-start justify-between flex-wrap gap-2 mb-3">
+              <h3 className="font-semibold text-sm">72h Berth Gantt — CP-SAT assignments</h3>
+              <div className="text-[10px] font-mono text-[var(--text-muted)]">
+                objective weights: {Object.entries(opt.weights || {}).map(([k, v]) => `${k}=${v}`).join(" · ")}
               </div>
             </div>
-          </Card>
+            <div className="overflow-x-auto">
+              <div style={{ minWidth: 900 }}>
+                {/* Hour ticks */}
+                <div className="flex items-center mb-1" style={{ marginLeft: 116 }}>
+                  {[0, 12, 24, 36, 48, 60, 72].map((h) => (
+                    <div key={h} className="text-[9px] font-mono text-[var(--text-muted)]"
+                      style={{ position: "relative", left: `${(h / MAX_HOUR) * 100}%`, width: 0 }}>
+                      {h > 0 ? `+${h}h` : "now"}
+                    </div>
+                  ))}
+                </div>
 
-          <Card>
-            <h3 className="font-semibold mb-2">Assignments ({opt.assignments.length}) · deferred ({opt.deferred.length})</h3>
+                {Object.entries(
+                  (opt.assignments || []).reduce((acc: any, a: any) => {
+                    const key = `${a.terminal_code ?? ""} ${a.berth_name}`.trim();
+                    (acc[key] ||= []).push(a);
+                    return acc;
+                  }, {})
+                ).sort().map(([berth, list]: any) => {
+                  // find tidal curve for this berth (if available)
+                  const tideCurve = tides?.berths?.find((b: any) => b.berth_name === list[0]?.berth_name)?.curve ?? [];
+
+                  return (
+                    <div key={berth} className="flex items-center gap-2 py-0.5">
+                      <div className="font-mono text-[10px] text-[var(--text-secondary)] shrink-0 truncate" style={{ width: 110 }}>{berth}</div>
+                      <div className="relative flex-1" style={{ height: 26, background: "var(--bg-surface-elevated)", border: "1px solid var(--border-subtle)", borderRadius: 6 }}>
+                        {/* Tidal low-water shading */}
+                        {tideCurve.slice(0, MAX_HOUR).map((pt: any, hi: number) => {
+                          if (pt.depth_ft >= (list[0]?.design_depth_ft ?? 52)) return null;
+                          return (
+                            <div key={hi}
+                              className="absolute top-0 h-full pointer-events-none"
+                              style={{
+                                left: `${(hi / MAX_HOUR) * 100}%`,
+                                width: `${(1 / MAX_HOUR) * 100}%`,
+                                background: "rgba(96, 165, 250, 0.08)",
+                                borderLeft: "1px solid rgba(96, 165, 250, 0.12)",
+                              }}
+                              title={`Depth ${pt.depth_ft.toFixed(1)} ft at +${hi}h`}
+                            />
+                          );
+                        })}
+                        {/* Vessel blocks */}
+                        {list.map((a: any, i: number) => (
+                          <div key={i}
+                            title={`${a.vessel_name} · +${a.start_hour}→${a.end_hour}h · ${a.cranes} cranes · wait ${a.wait_hours}h · priority ${a.priority_score}`}
+                            className="absolute top-0 h-full text-[9px] flex items-center justify-center font-semibold overflow-hidden select-none"
+                            style={{
+                              left: `${(a.start_hour / MAX_HOUR) * 100}%`,
+                              width: `${Math.max(1.2, ((a.end_hour - a.start_hour) / MAX_HOUR) * 100)}%`,
+                              background: "var(--brand-soft)",
+                              border: "1px solid var(--brand-border)",
+                              borderRadius: 4,
+                              color: "var(--text-primary)",
+                            }}>
+                            {a.vessel_name?.replace("M/V ", "")} ×{a.cranes}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Tidal legend */}
+                {tides && (
+                  <div className="flex items-center gap-2 mt-2 text-[9px] text-[var(--text-muted)]">
+                    <span style={{ display: "inline-block", width: 12, height: 10, background: "rgba(96, 165, 250, 0.15)", border: "1px solid rgba(96, 165, 250, 0.3)", borderRadius: 2 }} />
+                    Low-water (depth below design) · amplitude ±{tides.amplitude_ft} ft · period {tides.period_hours}h
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Assignment table with binding constraint */}
+          <div className="p-4 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)]">
+            <h3 className="font-semibold text-sm mb-3">
+              Assignments ({opt.assignments?.length}) · deferred ({opt.deferred?.length})
+            </h3>
             <div className="overflow-x-auto max-h-80">
-              <table className="w-full min-w-[540px]">
-                <thead><tr><th>Vessel</th><th>Berth</th><th>Terminal</th><th>Start</th><th>End</th><th>Cranes</th><th>Wait h</th></tr></thead>
+              <table className="w-full min-w-[640px] text-xs">
+                <thead>
+                  <tr className="text-[10px] text-[var(--text-muted)] uppercase">
+                    <th className="text-left py-1 pr-2">Vessel</th>
+                    <th className="text-left pr-2">Berth</th>
+                    <th className="text-left pr-2">Terminal</th>
+                    <th className="text-right pr-2">Start</th>
+                    <th className="text-right pr-2">End</th>
+                    <th className="text-right pr-2">Cranes</th>
+                    <th className="text-right pr-2">Wait</th>
+                    <th className="text-right">Priority</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {opt.assignments.map((a: any) => (
-                    <tr key={a.vessel_id}>
-                      <td>{a.vessel_name}</td><td className="mono">{a.berth_name}</td><td>{a.terminal_code}</td>
-                      <td className="mono">+{a.start_hour}h</td><td className="mono">+{a.end_hour}h</td>
-                      <td>{a.cranes}</td><td className="mono">{a.wait_hours}</td>
+                  {opt.assignments?.map((a: any) => (
+                    <tr key={a.vessel_id} className="border-t border-[var(--border-subtle)]">
+                      <td className="py-1 pr-2 font-medium">{a.vessel_name}</td>
+                      <td className="pr-2 font-mono">{a.berth_name}</td>
+                      <td className="pr-2 text-[var(--text-secondary)]">{a.terminal_code}</td>
+                      <td className="text-right pr-2 font-mono">+{a.start_hour}h</td>
+                      <td className="text-right pr-2 font-mono">+{a.end_hour}h</td>
+                      <td className="text-right pr-2 font-mono">{a.cranes}</td>
+                      <td className="text-right pr-2 font-mono text-[var(--text-muted)]">{a.wait_hours}h</td>
+                      <td className="text-right font-mono text-[var(--text-muted)]">{a.priority_score != null ? Number(a.priority_score).toFixed(1) : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            {!!opt.deferred.length && <div className="muted text-xs mt-2">Deferred: {opt.deferred.map((d: any) => d.vessel_name).join(", ")}</div>}
-          </Card>
+            {!!opt.deferred?.length && (
+              <div className="mt-2 space-y-0.5">
+                <div className="text-xs font-semibold text-[var(--status-warning)]">Deferred vessels:</div>
+                {opt.deferred.map((d: any) => (
+                  <div key={d.vessel_name} className="text-[10px] font-mono text-[var(--text-muted)]">
+                    {d.vessel_name} — {d.reason ?? "beyond 72h horizon"}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </>
       )}
 
+      {/* Terminals capacity */}
       {terms && (
-        <Card>
-          <h3 className="font-semibold mb-2">Terminals — real POLB capacity, live yard &amp; crane state</h3>
+        <div className="p-4 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)]">
+          <h3 className="font-semibold text-sm mb-3">Terminals — real POLB capacity + live yard &amp; crane state</h3>
           <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
-            {terms.terminals.map((t: any) => (
-              <div key={t.code} className="card-2 p-3">
-                <div className="font-medium">{t.code} · {t.pier}</div>
-                <div className="muted text-xs">{t.name}</div>
-                <div className="text-xs mt-2">{t.deepsea_berths} berths · {t.gantry_cranes} STS · {Number(t.berth_length_ft).toLocaleString()} ft{t.capacity_teu_m ? ` · ${t.capacity_teu_m}M TEU/yr` : ""}</div>
-                <div className="text-xs mt-1">cranes: <span className="accent">{t.cranes.filter((c: any) => c.status === "AVAILABLE").length} available</span>
-                  {t.cranes.some((c: any) => c.status !== "AVAILABLE") && <span className="muted"> · {t.cranes.filter((c: any) => c.status !== "AVAILABLE").length} maint.</span>}
+            {terms.terminals?.map((t: any) => (
+              <div key={t.code} className="p-3 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)]">
+                <div className="font-semibold text-sm">{t.code} <span className="text-[var(--text-muted)] font-normal text-xs">· {t.pier}</span></div>
+                <div className="text-[10px] text-[var(--text-muted)] mb-2 truncate">{t.name}</div>
+                <div className="text-xs">{t.deepsea_berths} berths · {t.gantry_cranes} STS · {Number(t.berth_length_ft).toLocaleString()} ft{t.capacity_teu_m ? ` · ${t.capacity_teu_m}M TEU` : ""}</div>
+                <div className="text-xs mt-1">
+                  cranes: <span className="font-semibold" style={{ color: "var(--accent)" }}>
+                    {t.cranes?.filter((c: any) => c.status === "AVAILABLE").length} avail
+                  </span>
+                  {t.cranes?.some((c: any) => c.status !== "AVAILABLE") && (
+                    <span className="text-[var(--text-muted)]"> · {t.cranes?.filter((c: any) => c.status !== "AVAILABLE").length} maint.</span>
+                  )}
                 </div>
-                <div className="muted text-xs mt-1">yard {t.yard_zones.map((y: any) => `${y.code}:${y.util_pct}%`).join(" ")}</div>
-                <div className="muted text-xs">gate {t.gate?.lanes} lanes · q {t.gate?.queue_len}</div>
+                <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
+                  yard: {t.yard_zones?.map((y: any) => `${y.code}:${y.util_pct}%`).join(" ")}
+                </div>
+                <div className="text-[10px] text-[var(--text-muted)]">gate {t.gate?.lanes} lanes · q {t.gate?.queue_len}</div>
               </div>
             ))}
           </div>
-        </Card>
+        </div>
       )}
     </div>
   );

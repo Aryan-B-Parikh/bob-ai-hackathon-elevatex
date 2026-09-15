@@ -14,7 +14,9 @@ export interface WeatherPoint {
   hour: number;
   ts: string;
   wind_kn: number | null;
+  gust_kn: number | null;
   wave_m: number | null;
+  visibility_km: number | null;
 }
 export interface WeatherResponse {
   points: WeatherPoint[];

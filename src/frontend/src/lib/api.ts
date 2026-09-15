@@ -75,7 +75,7 @@ export const api = {
   routing: () => get("/api/routing"),
   plan: () => get("/api/plan"),
   optimiseLatest: () => get("/api/optimise/latest"),
-  optimise: (body: { crane_factor: number; move_rate_per_crane_hour: number; incremental?: boolean }) =>
+  optimise: (body: { crane_factor: number; move_rate_per_crane_hour: number; incremental?: boolean; tidal?: boolean }) =>
     post("/api/optimise", body),
   bobHistory: () => get("/api/bob"),
   bob: (message: string) => post("/api/bob", { message }),

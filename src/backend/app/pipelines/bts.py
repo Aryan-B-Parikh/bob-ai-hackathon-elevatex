@@ -11,18 +11,18 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from typing import List, Dict, Any
+from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 
 
-def _required_columns() -> List[str]:
+def _required_columns() -> list[str]:
     return ["terminal_code", "berth_id", "avg_moves"]
 
 
-def parse_bts_csv(csv_bytes: bytes) -> List[Dict[str, Any]]:
+def parse_bts_csv(csv_bytes: bytes) -> list[dict[str, Any]]:
     """Parse CSV bytes and return a list of dict rows after validation."""
-    result: List[Dict[str, Any]] = []
+    result: list[dict[str, Any]] = []
     with io.StringIO(csv_bytes.decode("utf-8")) as f:
         reader = csv.DictReader(f)
         missing = set(_required_columns()) - set(reader.fieldnames or [])

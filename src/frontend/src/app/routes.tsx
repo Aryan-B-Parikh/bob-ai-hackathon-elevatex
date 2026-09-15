@@ -9,7 +9,7 @@ const CongestionPage = React.lazy(() => import("../pages/CongestionPage"));
 const ScenarioPage = React.lazy(() =>
   import("../features/scenarios").then((m) => ({ default: m.ScenarioPage }))
 );
-import QualityPlaceholder from "../pages/QualityPlaceholder";
+const QualityPage = React.lazy(() => import("../pages/QualityPage"));
 import { PageContainer } from "../components/layout/PageContainer";
 import { PageHeader } from "../components/layout/PageHeader";
 import { StatusBadge } from "../components/ui/StatusBadge";
@@ -133,9 +133,9 @@ export const TABS_REGISTRY: Record<string, TabConfig> = {
   quality: {
     id: "quality",
     title: "Data Quality & Ingestion",
-    subtitle: "Completeness scoring and schedule revision audit trail",
+    subtitle: "Completeness scoring, weather ingestion, and schedule revision audit trail",
     breadcrumbs: ["Analysis", "Data Quality"],
-    Component: QualityPlaceholder,
+    Component: QualityPage,
   },
   bob: {
     id: "bob",

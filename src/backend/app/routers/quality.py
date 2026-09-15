@@ -56,11 +56,10 @@ def weather(db: Session = Depends(get_db), hours: int = Query(72, ge=1, le=336))
 
 
 def _weather_points(db: Session, hours: int) -> dict:
-    from ..models import WeatherObservation
 
     stmt = select(WeatherObservation).where(
-        WeatherObservation.hours_ago >= 0,
-        WeatherObservation.hours_ago <= hours,
+        WeatherObservation.hours_ago <= 0,
+        WeatherObservation.hours_ago >= -hours,
     ).order_by(WeatherObservation.hours_ago)
     obs = db.execute(stmt).scalars().all()
     points = [{

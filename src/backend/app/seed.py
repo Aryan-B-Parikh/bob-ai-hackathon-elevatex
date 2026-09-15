@@ -52,6 +52,12 @@ def seed(reset: bool = False) -> None:
     ensure_schema()
     db = SessionLocal()
     try:
+        if not reset:
+            # If terminals already exist, skip re-seeding to preserve live data.
+            existing = db.execute(select(Terminal)).scalars().first()
+            if existing:
+                print("Seed skipped — data already present (use --reset to wipe and re-seed).")
+                return
         _clear(db)
 
         # ---------------------------------------------------------- REAL terminals

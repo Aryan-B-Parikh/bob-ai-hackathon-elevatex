@@ -15,22 +15,22 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 
 _REQUIRED_COLUMNS = {"imo", "voyage_number", "declared_eta_hours"}
 
 
-def parse_schedule(csv_bytes: bytes) -> Dict[str, Any]:
+def parse_schedule(csv_bytes: bytes) -> dict[str, Any]:
     """Parse CSV bytes into accepted rows + rejected rows with errors.
 
     Returns ``{"accepted": [...], "rejected": [{"row_no", "row", "error"}], "rows": n}``.
     ``declared_eta_hours`` is coerced to ``float``; a row that cannot be coerced, or
     that is missing a required value, is rejected with its error string.
     """
-    accepted: List[Dict[str, Any]] = []
-    rejected: List[Dict[str, Any]] = []
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
 
     with io.StringIO(csv_bytes.decode("utf-8")) as f:
         reader = csv.DictReader(f)

@@ -1,6 +1,6 @@
 """Capability routers — one per engine, mounted behind the FastAPI gateway."""
 
-from . import anomalies, bob, catalog, forecast, optimise, overview, plan, quality, routing, scenarios
+from . import ais, anomalies, bob, catalog, forecast, optimise, overview, plan, quality, routing, scenarios
 
 ALL_ROUTERS = [
     overview.router,
@@ -12,5 +12,6 @@ ALL_ROUTERS = [
     plan.router,          # W3
     catalog.router,       # W1
     quality.router,       # W1 (new: /api/quality, /api/weather)
+    ais.router,           # AIS data management: generate + status
     bob.router,
 ]

@@ -9,11 +9,11 @@ Provides:
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..models import VesselCall, TerminalQuality, Terminal
+from ..models import Terminal, TerminalQuality, VesselCall
 
 
 class NormalisationEngine:
@@ -25,7 +25,7 @@ class NormalisationEngine:
     """
 
     # Mapping of field -> (conversion factor to SI, SI unit)
-    _conversion_map: Dict[str, tuple[float, str]] = {
+    _conversion_map: dict[str, tuple[float, str]] = {
         "loa_ft": (0.3048, "m"),
         "beam_ft": (0.3048, "m"),
         "draft_ft": (0.3048, "m"),
@@ -35,8 +35,8 @@ class NormalisationEngine:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def normalise_vessel(self, vessel: VesselCall) -> Dict[str, Any]:
-        norm: Dict[str, Any] = {}
+    def normalise_vessel(self, vessel: VesselCall) -> dict[str, Any]:
+        norm: dict[str, Any] = {}
         for field, (factor, unit) in self._conversion_map.items():
             raw_val = getattr(vessel, field, None)
             if raw_val is not None:
